@@ -2,7 +2,7 @@
 <html lang="zh-TW">
 <head>
     <meta charset="UTF-8">
-    <title>家族數位族譜 v8.1</title>
+    <title>家族數位族譜 v8.5 - 全家福版</title>
     <script src="https://d3js.org/d3.v7.min.js"></script>
     <style>
         :root { --gold: #8b5a2b; --spouse: #e67e22; --active: #3498db; }
@@ -50,43 +50,47 @@
 
         function render() {
             g.selectAll("*").remove();
-            let bloodline = familyData.filter(d => !d.isSpouseOf);
-            const idList = bloodline.map(d => d.id);
-
-            // 解決 Multiple Roots: 如果沒填父母，則暫時指向一個虛擬中心
+            
+            // 找出所有人的 ID 方便比對
+            const allIds = familyData.map(d => d.id);
+            
+            // 繪圖核心：確保每個人都有一個父節點（即使是虛擬的）
+            const bloodline = familyData.filter(d => !d.isSpouseOf);
             bloodline.forEach(d => {
-                if (d.parents.length === 0 || !idList.includes(d.parents[0])) {
+                if (d.parents.length === 0 || !allIds.includes(d.parents[0])) {
                     d.parents = ["VIRTUAL_ROOT"];
                 }
             });
 
-            // 加入虛擬根節點
             const drawData = [...bloodline, { id: "VIRTUAL_ROOT", name: "", parents: [] }];
 
             try {
                 const root = d3.stratify().id(d => d.id).parentId(d => d.parents[0])(drawData);
-                d3.tree().nodeSize([120, 300])(root);
+                d3.tree().nodeSize([150, 300])(root);
 
-                // 畫連線 (隱藏與虛擬根的連線)
+                // 畫血親連線
                 g.selectAll(".link").data(root.links().filter(l => l.source.id !== "VIRTUAL_ROOT"))
                     .enter().append("path").attr("class", "link")
                     .attr("d", d3.linkHorizontal().x(d => d.y).y(d => d.x));
 
-                // 畫節點 (隱藏虛擬根節點)
+                // 畫節點
                 const nodes = g.selectAll(".node").data(root.descendants().filter(d => d.id !== "VIRTUAL_ROOT"))
                     .enter().append("g").attr("transform", d => `translate(${d.y}, ${d.x})`);
 
                 nodes.each(function(d) {
                     const el = d3.select(this);
+                    // 畫本人
                     drawNode(el, d.data, 0);
-                    const spouse = familyData.find(f => f.isSpouseOf === d.data.id);
-                    if (spouse) {
-                        el.append("line").attr("class", "marriage-line").attr("x1", 0).attr("y1", 45).attr("x2", 0).attr("y2", 75);
-                        drawNode(el, spouse, 120);
+                    
+                    // 尋找並畫出配偶 (修正：確保配偶一定會出現)
+                    const spouse = familyData.find(f => f.isSpouseOf === d.data.id || d.data.isSpouseOf === f.id);
+                    if (spouse && spouse.id !== d.data.id) {
+                        el.append("line").attr("class", "marriage-line").attr("x1", 0).attr("y1", 45).attr("x2", 0).attr("y2", 105);
+                        drawNode(el, spouse, 150);
                     }
                 });
             } catch (err) {
-                console.error("繪圖失敗:", err);
+                console.error("繪圖錯誤:", err);
             }
         }
 
