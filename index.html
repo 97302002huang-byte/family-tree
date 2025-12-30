@@ -1,0 +1,144 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <title>家族數位族譜 v6.0 - 診斷與同步版</title>
+    <script src="https://d3js.org/d3.v7.min.js"></script>
+    <style>
+        :root { --main-gold: #8b5a2b; --spouse: #e67e22; --active: #3498db; }
+        body { margin: 0; font-family: "Microsoft JhengHei", sans-serif; display: flex; background: #f4f1ea; height: 100vh; overflow: hidden; }
+        #tree-container { flex: 1; background: #fcfaf5; }
+        #info-panel { width: 320px; background: white; border-left: 3px solid var(--main-gold); padding: 25px; box-shadow: -5px 0 15px rgba(0,0,0,0.1); }
+        #debug-panel { position: fixed; bottom: 20px; left: 20px; background: rgba(0,0,0,0.8); color: #fff; padding: 15px; border-radius: 8px; font-size: 12px; z-index: 1000; }
+        
+        .node circle { fill: #fff; stroke: var(--main-gold); stroke-width: 2.5px; transition: 0.2s; cursor: pointer; }
+        .node:hover circle { stroke: var(--active); stroke-width: 4px; }
+        .node.focused circle { stroke: var(--active); stroke-width: 6px; fill: #ebf5fb; }
+        .node.spouse circle { stroke: var(--spouse); }
+        .link { fill: none; stroke: #d2c4b5; stroke-width: 2px; }
+        .marriage-line { stroke: var(--spouse); stroke-width: 3px; stroke-dasharray: 5; }
+        .profile-img { width: 120px; height: 120px; border-radius: 50%; border: 4px solid var(--main-gold); object-fit: cover; }
+    </style>
+</head>
+<body>
+
+<div id="debug-panel">📡 偵測中...</div>
+<div id="tree-container"></div>
+<div id="info-panel">
+    <div id="focus-display" style="background:var(--active); color:white; padding:10px; border-radius:5px; text-align:center; margin-bottom:20px; font-weight:bold;">同步狀態：確認中</div>
+    <div id="detail-content"></div>
+</div>
+
+<script>
+    // 您的 CSV 發佈連結
+    const CSV_URL = "https://docs.google.com/spreadsheets/d/e/2PACX-1vSV9UA8RtEJ3d2_Tb9EsIQPeGCf7egp59josXOT4wU3i7fb461XqSqJd4N5ShN89QOt7apY8rStBh4H/pub?output=csv";
+
+    let familyData = [];
+    let currentFocus = null;
+
+    const g = d3.select("#tree-container").append("svg")
+        .attr("width", window.innerWidth - 320).attr("height", window.innerHeight)
+        .call(d3.zoom().on("zoom", (e) => g.selectAll("g").attr("transform", e.transform)))
+        .append("g");
+
+    // 1. 抓取資料並進行「X 光診斷」
+    d3.csv(CSV_URL).then(data => {
+        const row1 = data[0];
+        const headers = Object.keys(row1);
+        document.getElementById('debug-panel').innerHTML = `<b>讀取到的欄位：</b><br>${headers.join(' | ')}`;
+
+        // 自動映射欄位 (支援 父親ID, 父級ID 等多種寫法)
+        const getCol = (set) => set.find(s => row1.hasOwnProperty(s));
+        const keys = {
+            id: getCol(['ID', 'id']),
+            name: getCol(['姓名', 'Name']),
+            gender: getCol(['性別', 'Gender']),
+            parents: getCol(['父親ID', '父級ID', 'Parents']),
+            spouse: getCol(['配偶ID', 'Spouse']),
+            photo: getCol(['照片ID', 'Photo'])
+        };
+
+        familyData = data.map(d => ({
+            id: d[keys.id].trim(),
+            name: d[keys.name].trim(),
+            gender: d[keys.gender] ? d[keys.gender].trim().toUpperCase() : 'M',
+            photoId: d[keys.photo] ? d[keys.photo].trim() : '',
+            parents: d[keys.parents] ? d[keys.parents].split(/[,，]/).map(s => s.trim()).filter(x => x) : [],
+            isSpouseOf: d[keys.spouse] ? d[keys.spouse].trim() : null
+        }));
+
+        currentFocus = familyData[0];
+        document.getElementById('focus-display').innerText = `當前視角：${currentFocus.name}`;
+        render();
+        updateUI(currentFocus);
+    }).catch(err => {
+        document.getElementById('debug-panel').innerHTML = `<b style="color:red">連線失敗：</b><br>${err.message}`;
+    });
+
+    // 稱謂演算法與繪圖邏輯
+    function getRelation(target, source) {
+        if (target.id === source.id) return "本人";
+        if (target.isSpouseOf === source.id || source.isSpouseOf === target.id) return (target.gender === 'M' ? "丈夫" : "妻子");
+        
+        let sParents = source.parents || [];
+        if (source.isSpouseOf) {
+            const p = familyData.find(f => f.id === source.isSpouseOf);
+            if (p) sParents = p.parents;
+        }
+
+        if (sParents.includes(target.id)) return (target.gender === 'M' ? "父親" : "母親");
+        if (target.parents.includes(source.id)) return (target.gender === 'M' ? "兒子" : "女兒");
+        return "親屬";
+    }
+
+    function render() {
+        g.selectAll("*").remove();
+        const bloodline = familyData.filter(d => !d.isSpouseOf);
+        const root = d3.stratify().id(d => d.id).parentId(d => d.parents[0])(bloodline);
+        d3.tree().nodeSize([120, 300])(root);
+
+        g.selectAll(".link").data(root.links()).enter().append("path").attr("class", "link")
+         .attr("d", d3.linkHorizontal().x(d => d.y).y(d => d.x));
+
+        const nodeGroups = g.selectAll(".node-group").data(root.descendants()).enter().append("g")
+                            .attr("transform", d => `translate(${d.y}, ${d.x})`);
+
+        nodeGroups.each(function(d) {
+            const el = d3.select(this);
+            drawNode(el, d.data, 0);
+            const spouse = familyData.find(f => f.isSpouseOf === d.data.id);
+            if (spouse) {
+                el.append("line").attr("class", "marriage-line").attr("x1", 0).attr("y1", 45).attr("x2", 0).attr("y2", 75);
+                drawNode(el, spouse, 120);
+            }
+        });
+    }
+
+    function drawNode(parent, data, yOffset) {
+        const n = parent.append("g").attr("class", `node ${data.id === currentFocus.id ? 'focused' : ''} ${data.isSpouseOf ? 'spouse' : ''}`)
+            .attr("transform", `translate(0, ${yOffset})`)
+            .on("mouseover", () => updateUI(data))
+            .on("click", () => { currentFocus = data; render(); updateUI(data); });
+
+        n.append("circle").attr("r", 45);
+        n.append("image").attr("xlink:href", `https://drive.google.com/uc?export=view&id=${data.photoId}`)
+            .attr("x", -40).attr("y", -40).attr("width", 80).attr("height", 80)
+            .attr("clip-path", "circle(40px at 40px 40px)")
+            .on("error", function() { d3.select(this).attr("xlink:href", `https://ui-avatars.com/api/?name=${encodeURIComponent(data.name)}&background=8b5a2b&color=fff`); });
+        n.append("text").attr("dy", 70).attr("text-anchor", "middle").text(data.name);
+    }
+
+    function updateUI(m) {
+        const rel = getRelation(m, currentFocus);
+        d3.select("#detail-content").html(`
+            <div style="text-align:center;">
+                <img src="https://drive.google.com/uc?export=view&id=${m.photoId}" class="profile-img" onerror="this.src='https://ui-avatars.com/api/?name=${encodeURIComponent(m.name)}&background=8b5a2b&color=fff'">
+                <h2>${m.name}</h2>
+                <div style="font-size:1.8em; color:var(--spouse); font-weight:bold;">${rel}</div>
+                <hr><p style="color:#999; font-size:0.8em;">滑鼠懸停看稱謂 | 點擊切換視角</p>
+            </div>
+        `);
+    }
+</script>
+</body>
+</html>
