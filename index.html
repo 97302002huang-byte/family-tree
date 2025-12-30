@@ -32,7 +32,9 @@
 </div>
 
 <script>
-// 階段一：成員資料庫
+// ==========================================
+// 1. 資料定義 (保持您的原始資料)
+// ==========================================
 const familyData = [
   { "id": "P001", "name": "黃兆宏", "enName": "", "gender": "M", "birthday": "1956/01/15", "spouse": "P002", "parents": [], "photo": "https://drive.google.com/uc?export=view&id=1LU64R0LCdVxFyfSgRQLmAtZ-OuL6Zzma" },
   { "id": "P002", "name": "劉水蓮", "enName": "", "gender": "F", "birthday": "1961/02/02", "spouse": "P001", "parents": [], "photo": "https://drive.google.com/uc?export=view&id=1_CcuhFYkqVL6B-1RHg210ar4vEx60lsU" },
@@ -40,74 +42,104 @@ const familyData = [
   { "id": "P004", "name": "黃柏凱", "enName": "Frank", "gender": "M", "birthday": "1991/10/03", "spouse": null, "parents": ["P001", "P002"], "photo": "https://drive.google.com/uc?export=view&id=1i3h7jmxRESk7gP1Qv3vI4ttNdaQLzPx8" }
 ];
 
-// 轉換為 D3 階層結構 (以父系為主要路徑)
-function buildHierarchy(data) {
-    const dataMap = data.reduce((acc, el) => { acc[el.id] = {...el, children: []}; return acc; }, {});
-    let root = null;
-    data.forEach(el => {
-        if (el.parents.length > 0) {
-            // 為了簡化顯示，我們將孩子掛在第一個父母(通常是父親)下面
-            dataMap[el.parents[0]].children.push(dataMap[el.id]);
-        } else {
-            if (!root) root = dataMap[el.id];
-        }
-    });
-    return root;
+// 全域狀態：紀錄目前「選中」的中心成員
+let selectedMember = familyData[0]; 
+
+// ==========================================
+// 2. 稱謂與關係運算引擎
+// ==========================================
+function getRelationship(targetId, sourceMember) {
+    if (targetId === sourceMember.id) return "本人";
+    if (sourceMember.spouse === targetId) return "配偶";
+    if (sourceMember.parents.includes(targetId)) return "父母";
+    
+    // 尋找孩子邏輯
+    const target = familyData.find(m => m.id === targetId);
+    if (target && target.parents.includes(sourceMember.id)) return "子女";
+    
+    // 兄弟姊妹邏輯 (擁有相同父母)
+    if (target && target.parents.length > 0 && 
+        JSON.stringify(target.parents) === JSON.stringify(sourceMember.parents)) {
+        return target.gender === 'M' ? "兄弟" : "姊妹";
+    }
+    
+    return "親屬";
 }
 
-const rootData = d3.hierarchy(buildHierarchy(familyData));
+// ==========================================
+// 3. D3.js 繪圖邏輯 (優化版)
+// ==========================================
 const width = window.innerWidth;
 const height = window.innerHeight;
 
 const svg = d3.select("#canvas").append("svg")
     .attr("width", width)
     .attr("height", height)
-    .call(d3.zoom().on("zoom", (event) => g.attr("transform", event.transform)))
+    .call(d3.zoom().on("zoom", (e) => g.attr("transform", e.transform)))
     .append("g");
 
-const g = svg.append("g").attr("transform", "translate(100, 100)");
+const g = svg.append("g").attr("transform", "translate(100, height/2)");
+
+// 轉換資料為 D3 樹狀結構
+const dataMap = d3.index(familyData, d => d.id);
+const stratify = d3.stratify()
+    .id(d => d.id)
+    .parentId(d => d.parents[0]); // 預設以第一個家長為連線基準
+
+const root = stratify(familyData.filter(d => d.id !== 'P002')); // 暫時排除配偶節點避免報錯
 
 const treeLayout = d3.tree().size([height - 200, width - 400]);
-treeLayout(rootData);
+treeLayout(root);
 
 // 繪製連線
 g.selectAll(".link")
-    .data(rootData.links())
-    .enter().append("path")
+    .data(root.links())
+    .join("path")
     .attr("class", "link")
     .attr("d", d3.linkHorizontal().x(d => d.y).y(d => d.x));
 
-// 繪製成員節點
+// 繪製節點
 const nodes = g.selectAll(".node")
-    .data(rootData.descendants())
-    .enter().append("g")
+    .data(root.descendants())
+    .join("g")
     .attr("class", "node")
     .attr("transform", d => `translate(${d.y},${d.x})`)
-    .on("click", (e, d) => showDetail(d.data));
+    .on("click", (e, d) => {
+        selectedMember = d.data;
+        showDetail(d.data);
+    });
 
 nodes.append("circle")
-    .attr("r", 30)
-    .attr("fill", d => d.data.gender === 'M' ? '#add8e6' : '#ffb6c1');
+    .attr("r", 35)
+    .attr("fill", d => d.data.gender === 'M' ? '#4A90E2' : '#F5A623');
 
 nodes.append("text")
-    .attr("dy", ".35em")
-    .attr("x", 40)
-    .style("text-anchor", "start")
+    .attr("dy", "50px")
+    .style("text-anchor", "middle")
     .text(d => d.data.name);
 
-// 側邊欄控制
+// ==========================================
+// 4. UI 互動邏輯
+// ==========================================
 function showDetail(member) {
     document.getElementById('sb-name').innerText = member.name;
-    document.getElementById('sb-enname').innerText = member.enName || 'N/A';
-    document.getElementById('sb-birthday').innerText = member.birthday;
-    document.getElementById('sb-gender').innerText = member.gender === 'M' ? '男' : '女';
     document.getElementById('sb-photo').src = member.photo;
+    document.getElementById('sb-enname').innerText = member.enName || '---';
+    document.getElementById('sb-gender').innerText = member.gender === 'M' ? '男' : '女';
+    document.getElementById('sb-birthday').innerText = member.birthday;
+    
+    // 計算與「根節點(P001)」的關係作為示範
+    const rel = getRelationship(member.id, familyData[0]); 
+    // 您可以在 HTML 補一個 <p id="sb-rel"></p> 來顯示這個 rel
+    
     document.getElementById('sidebar').style.display = 'block';
 }
 
 function closeSidebar() {
     document.getElementById('sidebar').style.display = 'none';
 }
+}
 </script>
 </body>
 </html>
+
