@@ -2,36 +2,38 @@
 <html lang="zh-TW">
 <head>
     <meta charset="UTF-8">
-    <title>互動式數位家族樹 - 萬能容錯版</title>
+    <title>家族數位族譜 - 診斷與容錯版</title>
     <script src="https://d3js.org/d3.v7.min.js"></script>
     <style>
         :root { --male-color: #4A90E2; --female-color: #F5A623; }
-        body { font-family: "Microsoft JhengHei", sans-serif; background: #f0f2f5; margin: 0; overflow: hidden; }
+        body { font-family: "Microsoft JhengHei", sans-serif; background: #f4f7f9; margin: 0; overflow: hidden; }
         #canvas { width: 100vw; height: 100vh; }
-        .node circle { stroke: #fff; stroke-width: 3px; cursor: pointer; }
+        .node circle { stroke: #fff; stroke-width: 3px; cursor: pointer; transition: 0.3s; }
         .node text { font-size: 14px; font-weight: bold; fill: #333; pointer-events: none; }
-        .link { fill: none; stroke: #cbd5e0; stroke-width: 2px; stroke-opacity: 0.6; }
-        .tooltip { position: absolute; padding: 10px; background: rgba(0,0,0,0.8); color: white; border-radius: 6px; font-size: 13px; display: none; z-index: 1000; }
-        .sidebar { position: fixed; right: 0; top: 0; width: 300px; height: 100%; background: white; box-shadow: -5px 0 15px rgba(0,0,0,0.1); padding: 25px; display: none; z-index: 100; }
+        .link { fill: none; stroke: #cbd5e0; stroke-width: 2px; }
         .active-anchor { stroke: #2ecc71 !important; stroke-width: 6px !important; }
-        #error-msg { position: fixed; bottom: 20px; left: 20px; color: red; background: white; padding: 10px; display: none; border: 1px solid red; }
+        /* 錯誤診斷面板 */
+        #debug-panel { 
+            position: fixed; bottom: 10px; left: 10px; background: rgba(255,0,0,0.8); 
+            color: white; padding: 10px; border-radius: 5px; font-size: 12px; 
+            max-width: 300px; display: none; z-index: 2000;
+        }
+        .sidebar { position: fixed; right: 0; top: 0; width: 300px; height: 100%; background: white; box-shadow: -5px 0 15px rgba(0,0,0,0.1); padding: 25px; display: none; z-index: 100; }
     </style>
 </head>
 <body>
 
-<div id="loading" style="position:fixed; top:50%; left:50%; transform:translate(-50%,-50%);">正在載入家族數據...</div>
-<div id="error-msg"></div>
-<div id="tooltip" class="tooltip"></div>
+<div id="debug-panel"></div>
+<div id="loading" style="position:fixed; top:50%; left:50%; transform:translate(-50%,-50%);">系統診斷中...</div>
 <div id="canvas"></div>
 
 <div id="sidebar" class="sidebar">
-    <button onclick="this.parentElement.style.display='none'" style="float:right">✕</button>
-    <div style="text-align:center; margin-top:20px;">
+    <button onclick="this.parentElement.style.display='none'">✕</button>
+    <div id="sb-content" style="text-align:center; margin-top:20px;">
         <img id="sb-photo" style="width:120px; height:120px; border-radius:50%; object-fit:cover; border:2px solid #ddd;">
         <h2 id="sb-name"></h2>
+        <div id="sb-info" style="text-align:left; margin-top:20px;"></div>
     </div>
-    <hr>
-    <div id="sb-info"></div>
 </div>
 
 <script>
@@ -39,14 +41,15 @@ const SPREADSHEET_URL = 'https://docs.google.com/spreadsheets/d/e/2PACX-1vSV9UA8
 
 let familyData = [];
 let anchorMember = null;
-const width = window.innerWidth, height = window.innerHeight;
+const svg = d3.select("#canvas").append("svg").attr("width", window.innerWidth).attr("height", window.innerHeight);
+const g = svg.append("g");
+svg.call(d3.zoom().on("zoom", (e) => g.attr("transform", e.transform)));
 
-const svg = d3.select("#canvas").append("svg")
-    .attr("width", width).attr("height", height)
-    .call(d3.zoom().scaleExtent([0.1, 3]).on("zoom", (e) => g.attr("transform", e.transform)))
-    .append("g");
-
-const g = svg.append("g").attr("transform", "translate(150, 150)");
+function logError(msg) {
+    const panel = document.getElementById("debug-panel");
+    panel.style.display = "block";
+    panel.innerHTML += `<div>⚠️ ${msg}</div>`;
+}
 
 async function init() {
     try {
@@ -56,8 +59,8 @@ async function init() {
         
         familyData = raw.filter(d => d.ID).map(d => ({
             id: d.ID.trim(),
-            name: d["姓名 (中)"],
-            gender: d["性別"],
+            name: d["姓名 (中)"] || "未命名",
+            gender: d["性別"] || "M",
             spouse: d["配偶ID"] ? d["配偶ID"].trim() : null,
             parents: [d["父親ID"], d["母親ID"]].filter(p => p && p.trim() !== "").map(p => p.trim()),
             photo: d["相片路徑"],
@@ -65,53 +68,52 @@ async function init() {
             bio: d["個人簡介"]
         }));
 
-        if (familyData.length === 0) throw "CSV 內沒有資料";
+        if (familyData.length === 0) throw "表單內無有效資料";
         anchorMember = familyData[0];
         document.getElementById("loading").style.display = "none";
-        renderAll();
+        render();
     } catch (e) {
-        document.getElementById("loading").innerText = "連線失敗: " + e;
+        logError("載入失敗: " + e);
     }
 }
 
-function renderAll() {
+function render() {
     g.selectAll("*").remove();
-    
-    // 1. 建立關係映射
     const idMap = new Map(familyData.map(d => [d.id, d]));
-    const spouseSet = new Set(familyData.map(d => d.spouse).filter(s => s));
+    
+    // 檢查 ParentID 是否都存在於 ID 清單中
+    familyData.forEach(d => {
+        d.parents.forEach(pId => {
+            if (!idMap.has(pId)) logError(`成員 [${d.name}] 的父母 ID [${pId}] 不存在`);
+        });
+    });
 
-    // 2. 找出所有「根節點」 (沒有父母的人，且排除單純作為別人配偶的人)
+    // 找出所有家族的起點（根）
+    const spouseSet = new Set(familyData.map(d => d.spouse).filter(s => s));
     const roots = familyData.filter(d => d.parents.length === 0 && !spouseSet.has(d.id));
     
-    // 如果資料異常導致找不到根，強迫將第一個成員設為根
-    const finalRoots = roots.length > 0 ? roots : [familyData[0]];
+    let currentX = 100;
+    const treeLayout = d3.tree().nodeSize([150, 400]);
 
-    let offsetX = 0;
-    
-    finalRoots.forEach(rootData => {
+    roots.forEach(rootData => {
         try {
-            // 使用層次結構生成器，但加入保護機制
             const hierarchy = d3.stratify()
                 .id(d => d.id)
                 .parentId(d => {
-                    // 只尋找「第一個家長」且該家長必須存在於資料中
-                    const pId = d.parents[0];
-                    return idMap.has(pId) ? pId : null;
-                })(getDescendants(rootData.id));
+                    const firstParent = d.parents[0];
+                    return idMap.has(firstParent) ? firstParent : null;
+                })(getSafeSubtree(rootData.id, idMap));
 
-            const treeLayout = d3.tree().nodeSize([150, 400]);
-            const rootNode = treeLayout(hierarchy);
+            const treeRoot = treeLayout(hierarchy);
+            const treeG = g.append("g").attr("transform", `translate(${currentX}, 200)`);
 
-            const treeG = g.append("g").attr("transform", `translate(${offsetX}, 0)`);
-
-            // 畫連線
-            treeG.selectAll(".link").data(rootNode.links()).join("path")
+            // 畫線
+            treeG.selectAll(".link").data(treeRoot.links()).join("path")
                 .attr("class", "link")
                 .attr("d", d3.linkHorizontal().x(d => d.y).y(d => d.x));
 
-            // 畫節點
-            const nodes = treeG.selectAll(".node").data(rootNode.descendants()).join("g")
+            // 畫人
+            const nodes = treeG.selectAll(".node").data(treeRoot.descendants()).join("g")
                 .attr("transform", d => `translate(${d.y},${d.x})`);
 
             nodes.each(function(d) {
@@ -121,28 +123,26 @@ function renderAll() {
                     const sp = idMap.get(d.data.spouse);
                     const spG = treeG.append("g").attr("transform", `translate(${d.y}, ${d.x + 100})`);
                     drawNode(spG, sp);
-                    treeG.append("line").attr("x1", d.y).attr("y1", d.x+35).attr("x2", d.y).attr("y2", d.x+75)
-                         .attr("stroke","#ffb6c1").attr("stroke-dasharray","4");
+                    treeG.append("line").attr("x1", d.y).attr("y1", d.x + 35).attr("x2", d.y).attr("y2", d.x + 75)
+                         .attr("stroke", "#ffb6c1").attr("stroke-dasharray", "4");
                 }
             });
-
-            offsetX += 800; // 如果有多個根，水平隔開
-        } catch (err) {
-            console.error("局部樹狀渲染失敗:", err);
+            currentX += 1000;
+        } catch (e) {
+            logError(`樹狀分支 [${rootData.name}] 構建失敗: ${e.message}`);
         }
     });
 }
 
-// 遞迴獲取子孫 (防止 D3 Stratify 因為孤立節點崩潰)
-function getDescendants(rootId) {
+function getSafeSubtree(rootId, idMap) {
     const subset = new Set();
-    const queue = [rootId];
-    while(queue.length > 0) {
-        const id = queue.shift();
-        const m = familyData.find(d => d.id === id);
+    const stack = [rootId];
+    while(stack.length > 0) {
+        const id = stack.pop();
+        const m = idMap.get(id);
         if (m && !subset.has(m)) {
             subset.add(m);
-            familyData.filter(d => d.parents.includes(id)).forEach(c => queue.push(c.id));
+            familyData.filter(d => d.parents.includes(id)).forEach(c => stack.push(c.id));
         }
     }
     return Array.from(subset);
@@ -152,21 +152,15 @@ function drawNode(el, m) {
     el.append("circle").attr("r", 35)
         .attr("fill", m.gender === 'M' ? 'var(--male-color)' : 'var(--female-color)')
         .classed("active-anchor", m.id === anchorMember.id)
-        .on("click", () => { anchorMember = m; renderAll(); showSidebar(m); });
-    
+        .on("click", () => { anchorMember = m; render(); showSidebar(m); });
     el.append("text").attr("dy", "55px").attr("text-anchor", "middle").text(m.name);
-    
-    el.on("mouseover", (e) => {
-        d3.select("#tooltip").style("display", "block").html(`<strong>${m.name}</strong>`)
-            .style("left", (e.pageX+15)+"px").style("top", (e.pageY-10)+"px");
-    }).on("mouseout", () => d3.select("#tooltip").style("display", "none"));
 }
 
 function showSidebar(m) {
-    d3.select("#sb-photo").attr("src", m.photo || "");
-    d3.select("#sb-name").text(m.name);
-    d3.select("#sb-info").html(`<p>生日: ${m.birthday || '---'}</p><p>簡介: ${m.bio || '---'}</p>`);
-    d3.select("#sidebar").style("display", "block");
+    document.getElementById("sb-photo").src = m.photo || "";
+    document.getElementById("sb-name").innerText = m.name;
+    document.getElementById("sb-info").innerHTML = `<p>生日: ${m.birthday || '---'}</p><p>簡介: ${m.bio || '---'}</p>`;
+    document.getElementById("sidebar").style.display = "block";
 }
 
 init();
