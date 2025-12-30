@@ -2,7 +2,7 @@
 <html lang="zh-TW">
 <head>
     <meta charset="UTF-8">
-    <title>家族數位族譜 v8.0</title>
+    <title>家族數位族譜 v8.1</title>
     <script src="https://d3js.org/d3.v7.min.js"></script>
     <style>
         :root { --gold: #8b5a2b; --spouse: #e67e22; --active: #3498db; }
@@ -31,7 +31,6 @@
         const getCol = (names) => Object.keys(row1).find(k => names.some(n => k.replace(/\s+/g, '').includes(n)));
         const keys = { id: getCol(['ID']), name: getCol(['姓名']), gender: getCol(['性別']), spouse: getCol(['配偶']), father: getCol(['父親']), mother: getCol(['母親']), photo: getCol(['照片']) };
 
-        // 智慧過濾：處理 O 與 0 的混淆
         const fixId = (id) => id ? id.trim().toUpperCase().replace(/O/g, '0') : "";
 
         const familyData = data.map(d => ({
@@ -51,32 +50,44 @@
 
         function render() {
             g.selectAll("*").remove();
-            const bloodline = familyData.filter(d => !d.isSpouseOf);
-            
-            // 安全檢查：過濾找不到父級的資料列，避免 D3 崩潰
+            let bloodline = familyData.filter(d => !d.isSpouseOf);
             const idList = bloodline.map(d => d.id);
+
+            // 解決 Multiple Roots: 如果沒填父母，則暫時指向一個虛擬中心
             bloodline.forEach(d => {
-                if (d.parents[0] && !idList.includes(d.parents[0])) d.parents = [];
-            });
-
-            const root = d3.stratify().id(d => d.id).parentId(d => d.parents[0])(bloodline);
-            d3.tree().nodeSize([120, 300])(root);
-
-            g.selectAll(".link").data(root.links()).enter().append("path").attr("class", "link")
-                .attr("d", d3.linkHorizontal().x(d => d.y).y(d => d.x));
-
-            const nodes = g.selectAll(".node").data(root.descendants()).enter().append("g")
-                .attr("transform", d => `translate(${d.y}, ${d.x})`);
-
-            nodes.each(function(d) {
-                const el = d3.select(this);
-                drawNode(el, d.data, 0);
-                const spouse = familyData.find(f => f.isSpouseOf === d.data.id);
-                if (spouse) {
-                    el.append("line").attr("class", "marriage-line").attr("x1", 0).attr("y1", 45).attr("x2", 0).attr("y2", 75);
-                    drawNode(el, spouse, 120);
+                if (d.parents.length === 0 || !idList.includes(d.parents[0])) {
+                    d.parents = ["VIRTUAL_ROOT"];
                 }
             });
+
+            // 加入虛擬根節點
+            const drawData = [...bloodline, { id: "VIRTUAL_ROOT", name: "", parents: [] }];
+
+            try {
+                const root = d3.stratify().id(d => d.id).parentId(d => d.parents[0])(drawData);
+                d3.tree().nodeSize([120, 300])(root);
+
+                // 畫連線 (隱藏與虛擬根的連線)
+                g.selectAll(".link").data(root.links().filter(l => l.source.id !== "VIRTUAL_ROOT"))
+                    .enter().append("path").attr("class", "link")
+                    .attr("d", d3.linkHorizontal().x(d => d.y).y(d => d.x));
+
+                // 畫節點 (隱藏虛擬根節點)
+                const nodes = g.selectAll(".node").data(root.descendants().filter(d => d.id !== "VIRTUAL_ROOT"))
+                    .enter().append("g").attr("transform", d => `translate(${d.y}, ${d.x})`);
+
+                nodes.each(function(d) {
+                    const el = d3.select(this);
+                    drawNode(el, d.data, 0);
+                    const spouse = familyData.find(f => f.isSpouseOf === d.data.id);
+                    if (spouse) {
+                        el.append("line").attr("class", "marriage-line").attr("x1", 0).attr("y1", 45).attr("x2", 0).attr("y2", 75);
+                        drawNode(el, spouse, 120);
+                    }
+                });
+            } catch (err) {
+                console.error("繪圖失敗:", err);
+            }
         }
 
         function drawNode(parent, data, y) {
