@@ -3,96 +3,77 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>家族族譜 - 終極連線診斷版</title>
+    <title>家族數位族譜 - 雙模組強韌版</title>
     <script src="https://d3js.org/d3.v7.min.js"></script>
     <style>
-        /* --- 駭客風格診斷面板 --- */
-        body { margin: 0; overflow: hidden; background: #000; font-family: "Consolas", "Microsoft JhengHei", monospace; }
+        body { margin: 0; overflow: hidden; background: #111; font-family: "Microsoft JhengHei", sans-serif; }
         
-        #debug-panel { 
-            position: fixed; top: 0; left: 0; width: 100%; max-height: 35vh; 
-            overflow-y: auto; background: rgba(0,20,0,0.95); color: #33ff33; 
-            padding: 10px; border-bottom: 2px solid #33ff33; z-index: 9999;
-            font-size: 12px; line-height: 1.4; box-shadow: 0 0 15px rgba(51, 255, 51, 0.2);
-            pointer-events: none; /* 讓滑鼠可以穿透面板操作下方的圖 */
+        /* 控制面板 */
+        #control-panel {
+            position: fixed; top: 10px; left: 10px; z-index: 1000;
+            background: rgba(0,0,0,0.8); padding: 15px; border-radius: 8px; border: 1px solid #444;
+            color: #eee; box-shadow: 0 4px 10px rgba(0,0,0,0.5);
+            display: flex; flex-direction: column; gap: 10px;
         }
-        
-        /* 訊息等級顏色 */
-        .log-info { color: #33ff33; }
-        .log-req  { color: #00ccff; font-weight: bold; } /* 請求訊息 */
-        .log-warn { color: #ffcc00; }
-        .log-error { color: #ff0000; background: #330000; font-weight: bold; padding: 2px; display: inline-block;}
-        .log-success { color: #fff; background: #006600; padding: 2px 5px; border-radius: 3px;}
 
-        /* --- 繪圖區 --- */
+        /* 按鈕樣式 */
+        .btn-upload {
+            background: #2196F3; color: white; border: none; padding: 8px 12px;
+            cursor: pointer; border-radius: 4px; font-weight: bold; font-size: 14px;
+        }
+        .btn-upload:hover { background: #1976D2; }
+        
+        /* 隱藏原本醜醜的 input */
+        #csv-input { display: none; }
+
+        /* 狀態文字 */
+        #status-text { font-size: 13px; color: #00ff9d; font-family: monospace; }
+        .error { color: #ff5252 !important; }
+
+        /* 畫布 */
         #canvas { width: 100vw; height: 100vh; cursor: grab; }
         #canvas:active { cursor: grabbing; }
-        
-        .node circle { stroke: #fff; stroke-width: 2px; transition: all 0.3s; }
-        .node text { font-size: 13px; fill: #eee; text-shadow: 2px 2px 4px #000; pointer-events: none; font-weight: bold;}
-        .link { stroke-opacity: 0.6; stroke-width: 1.5px; }
 
-        /* 浮水印 */
-        #watermark {
-            position: fixed; bottom: 10px; right: 10px; color: #333; font-size: 12px; pointer-events: none;
-        }
+        .node circle { stroke: #fff; stroke-width: 2px; transition: all 0.3s; }
+        .node text { font-size: 13px; fill: #eee; text-shadow: 2px 2px 4px #000; pointer-events: none; font-weight: bold; }
+        .link { stroke-opacity: 0.6; stroke-width: 1.5px; }
     </style>
 </head>
 <body>
 
-    <div id="debug-panel">
-        <div>=== 系統啟動 (System Boot) ===</div>
-        <div>準備連線...</div>
+    <div id="control-panel">
+        <div id="status-text">系統待命中...</div>
+        
+        <label for="csv-input" class="btn-upload">📂 選擇 CSV 檔案 (手動模式)</label>
+        <input type="file" id="csv-input" accept=".csv">
+        
+        <div style="font-size: 11px; color: #888; margin-top:5px;">
+            如果自動連線失敗，請下載 CSV 並使用上方按鈕直接讀取。
+        </div>
     </div>
     
     <div id="canvas"></div>
-    <div id="watermark">Version: Proxy+AntiCache</div>
 
 <script>
     // ==========================================
-    // 0. 診斷核心 (Diagnostics Core)
-    // ==========================================
-    const debugPanel = document.getElementById("debug-panel");
-    
-    function log(msg, type="info") {
-        const div = document.createElement("div");
-        const time = new Date().toLocaleTimeString();
-        div.className = `log-${type}`;
-        div.innerText = `[${time}] ${msg}`;
-        debugPanel.appendChild(div);
-        debugPanel.scrollTop = debugPanel.scrollHeight;
-        console.log(`[${type.toUpperCase()}] ${msg}`);
-    }
-
-    // 全局錯誤攔截
-    window.onerror = function(message, source, lineno, colno, error) {
-        log(`CRITICAL ERROR: ${message} (Line: ${lineno})`, "error");
-        return true; 
-    };
-
-    // ==========================================
-    // 1. 連線設定 (Connection Setup)
+    // 1. 系統設定
     // ==========================================
     const width = window.innerWidth;
     const height = window.innerHeight;
-    
-    // 原始 Google CSV 連結
     const GOOGLE_CSV_URL = 'https://docs.google.com/spreadsheets/d/e/2PACX-1vSV9UA8RtEJ3d2_Tb9EsIQi_BW_O4gE3TJqU0uE-c_7dFuwETvY6MTAg86K3Z43G3Oq9wJ2T-Wc58WJ/pub?output=csv';
     
-    // *** 關鍵技術：抗快取時間戳記 (Cache Buster) ***
-    const timestamp = Date.now(); 
-    
-    // *** 關鍵技術：代理伺服器 (CORS Proxy) ***
-    // 組合順序：Proxy -> (Google URL + Timestamp)
-    const FINAL_URL = `https://api.allorigins.win/get?url=${encodeURIComponent(GOOGLE_CSV_URL + '&cache_bust=' + timestamp)}`;
+    // 更換為 corsproxy.io (通常比 allorigins 更快更穩)
+    const PROXY_URL = `https://corsproxy.io/?${encodeURIComponent(GOOGLE_CSV_URL + '&t=' + Date.now())}`;
 
-    log(`連線目標設定完成`, "info");
-    log(`本次請求 ID (Timestamp): ${timestamp}`, "req");
-    log(`使用代理通道 (Proxy Tunnel): AllOrigins`, "req");
+    // 狀態顯示器
+    const statusEl = document.getElementById("status-text");
+    function setStatus(msg, isError = false) {
+        statusEl.innerText = `> ${msg}`;
+        statusEl.className = isError ? "error" : "";
+        console.log(`[System] ${msg}`);
+    }
 
-    // ==========================================
-    // 2. 初始化畫布
-    // ==========================================
+    // 初始化畫布
     const svg = d3.select("#canvas").append("svg")
         .attr("width", width)
         .attr("height", height)
@@ -102,39 +83,49 @@
     const container = svg.append("g");
 
     // ==========================================
-    // 3. 執行資料抓取 (Data Fetching)
+    // 2. 模式 A: 自動網路連線 (Auto Fetch)
     // ==========================================
-    log("開始發送網路請求...", "info");
+    setStatus("嘗試自動連線 (Proxy Mode)...");
 
-    // 注意：AllOrigins 回傳的是 JSON，內容在 contents 欄位中
-    d3.json(FINAL_URL).then(response => {
-        if (!response || !response.contents) {
-            throw new Error("Proxy 回傳了空的內容");
-        }
+    d3.csv(PROXY_URL).then(data => {
+        setStatus(`自動連線成功！讀取 ${data.length} 人`);
+        renderTree(data);
+    }).catch(err => {
+        console.error(err);
+        setStatus("自動連線失敗 (請改用手動按鈕)", true);
+    });
 
-        const csvText = response.contents;
-        log(`資料下載成功！長度: ${csvText.length} bytes`, "success");
-        log(`狀態碼: ${response.status?.http_code || 'OK'}`, "info");
+    // ==========================================
+    // 3. 模式 B: 手動檔案讀取 (Manual Mode)
+    // ==========================================
+    document.getElementById('csv-input').addEventListener('change', function(e) {
+        const file = e.target.files[0];
+        if (!file) return;
 
-        // 解析 CSV
-        const raw_data = d3.csvParse(csvText);
-        log(`CSV 解析成功，共 ${raw_data.length} 筆資料`, "info");
-
-        // --- 欄位檢查診斷 ---
-        const cols = raw_data.columns;
-        if(!cols.includes("ID")) log("缺少必要欄位: ID", "error");
-        if(!cols.includes("父親ID")) log("缺少必要欄位: 父親ID", "error");
-
-        // ==========================================
-        // 4. 資料清洗與邏輯 (Processing)
-        // ==========================================
-        const nodes = raw_data.map((d, i) => {
-            const cleanD = {};
-            // 去除所有欄位名稱與值的空白
-            for (let key in d) cleanD[key.trim()] = d[key] ? d[key].trim() : "";
+        setStatus(`正在讀取檔案: ${file.name}...`);
+        
+        const reader = new FileReader();
+        reader.onload = function(event) {
+            const csvText = event.target.result;
+            const data = d3.csvParse(csvText); // 解析 CSV
+            setStatus(`手動讀取成功！共 ${data.length} 人`);
             
-            if (!cleanD['ID']) return null;
+            // 清除舊圖
+            container.selectAll("*").remove();
+            renderTree(data);
+        };
+        reader.readAsText(file);
+    });
 
+    // ==========================================
+    // 4. 共用渲染引擎 (Render Engine)
+    // ==========================================
+    function renderTree(raw_data) {
+        // --- 資料清洗 ---
+        const nodes = raw_data.map(d => {
+            const cleanD = {};
+            for (let key in d) cleanD[key.trim()] = d[key] ? d[key].trim() : "";
+            if (!cleanD['ID']) return null;
             return {
                 id: cleanD['ID'],
                 name: cleanD['姓名 (中)'] || cleanD['姓名 (英)'] || cleanD['ID'],
@@ -147,24 +138,20 @@
         }).filter(n => n);
 
         const nodeMap = new Map(nodes.map(n => [n.id, n]));
-        
-        // --- 遞迴計算輩分 (Robust Logic) ---
+
+        // --- 遞迴計算輩分 ---
         function calculateLevel(nodeId, visited = new Set()) {
             if (!nodeId || !nodeMap.has(nodeId)) return 0;
             if (visited.has(nodeId)) return 0;
             const node = nodeMap.get(nodeId);
             if (node.level !== null) return node.level;
-
             visited.add(nodeId);
             let fLvl = -1, mLvl = -1;
-            
             if (node.fatherId) fLvl = calculateLevel(node.fatherId, new Set(visited));
             if (node.motherId) mLvl = calculateLevel(node.motherId, new Set(visited));
-
             node.level = Math.max(fLvl, mLvl) + 1;
             return node.level;
         }
-
         nodes.forEach(n => calculateLevel(n.id));
         
         // 配偶校正
@@ -175,11 +162,7 @@
             }
         });
 
-        log("邏輯運算完成，物理引擎啟動...", "info");
-
-        // ==========================================
-        // 5. 物理引擎與渲染 (Physics & Rendering)
-        // ==========================================
+        // --- 建立連結 ---
         const links = [];
         nodes.forEach(n => {
             if (n.fatherId && nodeMap.has(n.fatherId)) links.push({ source: n.fatherId, target: n.id, type: 'parent' });
@@ -189,6 +172,7 @@
             }
         });
 
+        // --- 物理模擬 ---
         const simulation = d3.forceSimulation(nodes)
             .force("link", d3.forceLink(links).id(d => d.id).distance(d => d.type === 'spouse' ? 50 : 100))
             .force("charge", d3.forceManyBody().strength(-500))
@@ -196,7 +180,7 @@
             .force("center", d3.forceX(width / 2).strength(0.08))
             .force("y", d3.forceY(d => (d.level * 150) + 100).strength(2.5));
 
-        // 繪圖
+        // --- 繪圖 ---
         const link = container.append("g").selectAll(".link")
             .data(links).join("line")
             .attr("class", "link")
@@ -230,18 +214,7 @@
             if (!event.active) simulation.alphaTarget(0);
             d.fx = null; d.fy = null;
         }
-
-        log("✅ 渲染完成！畫面顯示中。", "success");
-        
-        // 5秒後自動淡化診斷面板，以免擋住畫面
-        setTimeout(() => { 
-            debugPanel.style.opacity = 0.2; 
-        }, 5000);
-
-    }).catch(err => {
-        log(`連線發生致命錯誤: ${err.message}`, "error");
-        log("請確認網路連線是否正常。", "error");
-    });
+    }
 </script>
 </body>
 </html>
