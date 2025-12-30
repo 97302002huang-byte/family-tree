@@ -3,72 +3,87 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>互動式數位家族樹 - 測試版</title>
+    <title>互動式數位家族樹 - 專業版</title>
     <script src="https://d3js.org/d3.v7.min.js"></script>
     <style>
-        body { font-family: "Microsoft JhengHei", sans-serif; background-color: #f4f7f6; margin: 0; overflow: hidden; }
-        #canvas { width: 100vw; height: 100vh; }
-        .node circle { stroke: #fff; stroke-width: 3px; }
-        .node text { font-size: 14px; font-weight: bold; }
-        .link { fill: none; stroke: #ccc; stroke-width: 2px; }
-        .node-card { cursor: pointer; transition: 0.3s; }
-        .node-card:hover { filter: brightness(1.1); }
-        .sidebar { position: fixed; right: 0; top: 0; width: 300px; height: 100%; background: white; box-shadow: -2px 0 10px rgba(0,0,0,0.1); padding: 20px; display: none; z-index: 100; }
-        .photo-frame { width: 80px; height: 80px; border-radius: 50%; border: 2px solid #ddd; object-fit: cover; }
+        :root {
+            --male-color: #4A90E2;
+            --female-color: #F5A623;
+            --bg-color: #f8f9fa;
+        }
+        body { font-family: "Microsoft JhengHei", sans-serif; background-color: var(--bg-color); margin: 0; overflow: hidden; }
+        #canvas { width: 100vw; height: 100vh; cursor: grab; }
+        #canvas:active { cursor: grabbing; }
+        
+        /* 節點樣式 */
+        .node circle { stroke: #fff; stroke-width: 3px; filter: drop-shadow(2px 2px 4px rgba(0,0,0,0.1)); }
+        .node text { font-size: 14px; font-weight: bold; fill: #333; }
+        .link { fill: none; stroke: #cbd5e0; stroke-width: 2px; }
+        
+        /* 側邊欄樣式 */
+        .sidebar { 
+            position: fixed; right: 0; top: 0; width: 320px; height: 100%; 
+            background: white; box-shadow: -5px 0 15px rgba(0,0,0,0.1); 
+            padding: 30px 20px; display: none; z-index: 100;
+            transition: transform 0.3s ease;
+        }
+        .sidebar-header { border-bottom: 2px solid #eee; padding-bottom: 15px; margin-bottom: 20px; }
+        .photo-frame { 
+            width: 120px; height: 120px; border-radius: 50%; 
+            border: 4px solid #fff; box-shadow: 0 4px 10px rgba(0,0,0,0.2);
+            object-fit: cover; display: block; margin: 0 auto 15px;
+        }
+        .info-item { margin: 10px 0; font-size: 15px; color: #444; }
+        .info-item strong { color: #888; width: 80px; display: inline-block; }
+        .relationship-tag {
+            display: inline-block; background: #e2e8f0; padding: 2px 10px;
+            border-radius: 12px; font-size: 12px; color: #4a5568; margin-top: 5px;
+        }
+        .close-btn { 
+            position: absolute; top: 15px; right: 15px; cursor: pointer;
+            background: #eee; border: none; border-radius: 50%; width: 30px; height: 30px;
+        }
     </style>
 </head>
 <body>
 
 <div id="canvas"></div>
+
 <div id="sidebar" class="sidebar">
-    <button onclick="closeSidebar()">關閉</button>
-    <h2 id="sb-name"></h2>
-    <img id="sb-photo" class="photo-frame" src="" alt="">
-    <p><strong>英文名：</strong><span id="sb-enname"></span></p>
-    <p><strong>生日：</strong><span id="sb-birthday"></span></p>
-    <p><strong>性別：</strong><span id="sb-gender"></span></p>
-    <hr>
-    <p id="sb-bio"></p>
+    <button class="close-btn" onclick="closeSidebar()">✕</button>
+    <div class="sidebar-header">
+        <img id="sb-photo" class="photo-frame" src="" alt="成員照片">
+        <h2 id="sb-name" style="text-align:center; margin: 10px 0 5px;"></h2>
+        <div id="sb-rel-box" style="text-align:center;">
+            <span id="sb-relationship" class="relationship-tag"></span>
+        </div>
+    </div>
+    <div class="info-item"><strong>英文姓名</strong> <span id="sb-enname"></span></div>
+    <div class="info-item"><strong>性別</strong> <span id="sb-gender"></span></div>
+    <div class="info-item"><strong>出生日期</strong> <span id="sb-birthday"></span></div>
+    <div class="info-item"><strong>個人簡介</strong><br><p id="sb-bio" style="color:#666; line-height: 1.6;"></p></div>
 </div>
 
 <script>
-// ==========================================
-// 1. 資料定義 (保持您的原始資料)
-// ==========================================
+// 1. 成員資料庫 (將您的 CSV 內容轉化為 JSON 物件)
 const familyData = [
-  { "id": "P001", "name": "黃兆宏", "enName": "", "gender": "M", "birthday": "1956/01/15", "spouse": "P002", "parents": [], "photo": "https://drive.google.com/uc?export=view&id=1LU64R0LCdVxFyfSgRQLmAtZ-OuL6Zzma" },
-  { "id": "P002", "name": "劉水蓮", "enName": "", "gender": "F", "birthday": "1961/02/02", "spouse": "P001", "parents": [], "photo": "https://drive.google.com/uc?export=view&id=1_CcuhFYkqVL6B-1RHg210ar4vEx60lsU" },
-  { "id": "P003", "name": "黃柏文", "enName": "Bruce", "gender": "M", "birthday": "1990/03/19", "spouse": null, "parents": ["P001", "P002"], "photo": "https://drive.google.com/uc?export=view&id=1VAOnXmYMzxNTnVN7eI9_Wd3o1ASEP-6H" },
-  { "id": "P004", "name": "黃柏凱", "enName": "Frank", "gender": "M", "birthday": "1991/10/03", "spouse": null, "parents": ["P001", "P002"], "photo": "https://drive.google.com/uc?export=view&id=1i3h7jmxRESk7gP1Qv3vI4ttNdaQLzPx8" }
+  { "id": "P001", "name": "黃兆宏", "enName": "---", "gender": "M", "birthday": "1956/01/15", "spouse": "P002", "parents": [], "photo": "https://drive.google.com/uc?export=view&id=1LU64R0LCdVxFyfSgRQLmAtZ-OuL6Zzma", "bio": "家族創始成員測試資料。" },
+  { "id": "P002", "name": "劉水蓮", "enName": "---", "gender": "F", "birthday": "1961/02/02", "spouse": "P001", "parents": [], "photo": "https://drive.google.com/uc?export=view&id=1_CcuhFYkqVL6B-1RHg210ar4vEx60lsU", "bio": "家族創始成員測試資料。" },
+  { "id": "P003", "name": "黃柏文", "enName": "Bruce", "gender": "M", "birthday": "1990/03/19", "spouse": null, "parents": ["P001", "P002"], "photo": "https://drive.google.com/uc?export=view&id=1VAOnXmYMzxNTnVN7eI9_Wd3o1ASEP-6H", "bio": "工程師。" },
+  { "id": "P004", "name": "黃柏凱", "enName": "Frank", "gender": "M", "birthday": "1991/10/03", "spouse": null, "parents": ["P001", "P002"], "photo": "https://drive.google.com/uc?export=view&id=1i3h7jmxRESk7gP1Qv3vI4ttNdaQLzPx8", "bio": "設計師。" }
 ];
 
-// 全域狀態：紀錄目前「選中」的中心成員
-let selectedMember = familyData[0]; 
-
-// ==========================================
-// 2. 稱謂與關係運算引擎
-// ==========================================
-function getRelationship(targetId, sourceMember) {
-    if (targetId === sourceMember.id) return "本人";
-    if (sourceMember.spouse === targetId) return "配偶";
-    if (sourceMember.parents.includes(targetId)) return "父母";
-    
-    // 尋找孩子邏輯
-    const target = familyData.find(m => m.id === targetId);
-    if (target && target.parents.includes(sourceMember.id)) return "子女";
-    
-    // 兄弟姊妹邏輯 (擁有相同父母)
-    if (target && target.parents.length > 0 && 
-        JSON.stringify(target.parents) === JSON.stringify(sourceMember.parents)) {
-        return target.gender === 'M' ? "兄弟" : "姊妹";
-    }
-    
-    return "親屬";
+// 2. 關係計算器
+function calculateRelation(target, rootMemberId = "P001") {
+    if (target.id === rootMemberId) return "本人";
+    const root = familyData.find(m => m.id === rootMemberId);
+    if (target.id === root.spouse) return "配偶";
+    if (target.parents.includes(rootMemberId)) return "子女";
+    if (root.parents.includes(target.id)) return "父母";
+    return "家族成員";
 }
 
-// ==========================================
-// 3. D3.js 繪圖邏輯 (優化版)
-// ==========================================
+// 3. D3 繪圖引擎
 const width = window.innerWidth;
 const height = window.innerHeight;
 
@@ -78,68 +93,91 @@ const svg = d3.select("#canvas").append("svg")
     .call(d3.zoom().on("zoom", (e) => g.attr("transform", e.transform)))
     .append("g");
 
-const g = svg.append("g").attr("transform", "translate(100, height/2)");
+const g = svg.append("g").attr("transform", "translate(100, 100)");
 
-// 轉換資料為 D3 樹狀結構
-const dataMap = d3.index(familyData, d => d.id);
-const stratify = d3.stratify()
-    .id(d => d.id)
-    .parentId(d => d.parents[0]); // 預設以第一個家長為連線基準
+// 建立階層結構 (處理配偶邏輯)
+const buildTree = () => {
+    // 過濾出主要樹幹（排除被標記為配偶的人，避免重複顯示）
+    const mainBranches = familyData.filter(d => {
+        // 如果是 P002 這種有配偶且在資料中不是「父/母第一位」的人，先不當作獨立節點
+        if (d.id === "P002") return false; 
+        return true;
+    });
 
-const root = stratify(familyData.filter(d => d.id !== 'P002')); // 暫時排除配偶節點避免報錯
+    const dataMap = d3.index(mainBranches, d => d.id);
+    const root = d3.stratify()
+        .id(d => d.id)
+        .parentId(d => d.parents[0])(mainBranches);
 
-const treeLayout = d3.tree().size([height - 200, width - 400]);
-treeLayout(root);
+    const treeLayout = d3.tree().size([height - 200, width - 500]);
+    return treeLayout(root);
+};
 
-// 繪製連線
+const rootNode = buildTree();
+
+// 繪製線條
 g.selectAll(".link")
-    .data(root.links())
+    .data(rootNode.links())
     .join("path")
     .attr("class", "link")
     .attr("d", d3.linkHorizontal().x(d => d.y).y(d => d.x));
 
 // 繪製節點
-const nodes = g.selectAll(".node")
-    .data(root.descendants())
+const node = g.selectAll(".node")
+    .data(rootNode.descendants())
     .join("g")
     .attr("class", "node")
     .attr("transform", d => `translate(${d.y},${d.x})`)
-    .on("click", (e, d) => {
-        selectedMember = d.data;
-        showDetail(d.data);
-    });
+    .on("click", (e, d) => showDetail(d.data));
 
-nodes.append("circle")
+// 圓形頭像框
+node.append("circle")
     .attr("r", 35)
     .attr("fill", d => d.data.gender === 'M' ? '#4A90E2' : '#F5A623');
 
-nodes.append("text")
-    .attr("dy", "50px")
-    .style("text-anchor", "middle")
+// 姓名文字
+node.append("text")
+    .attr("dy", "55px")
+    .attr("text-anchor", "middle")
     .text(d => d.data.name);
 
-// ==========================================
-// 4. UI 互動邏輯
-// ==========================================
+// 特別處理：如果在 P001 旁邊顯示配偶 P002
+const spouseOfRoot = familyData.find(m => m.id === "P002");
+if (spouseOfRoot) {
+    const spouseG = g.append("g")
+        .attr("class", "node")
+        .attr("transform", `translate(${rootNode.y}, ${rootNode.x + 80})`) // 顯示在下方 80px
+        .on("click", () => showDetail(spouseOfRoot));
+    
+    spouseG.append("circle").attr("r", 35).attr("fill", "#F5A623");
+    spouseG.append("text").attr("dy", "55px").attr("text-anchor", "middle").text(spouseOfRoot.name);
+    
+    // 畫一條配偶連線
+    g.append("line")
+        .attr("x1", rootNode.y).attr("y1", rootNode.x + 35)
+        .attr("x2", rootNode.y).attr("y2", rootNode.x + 45)
+        .attr("stroke", "#ffb6c1").attr("stroke-width", 3);
+}
+
+// 4. 側邊欄互動
 function showDetail(member) {
     document.getElementById('sb-name').innerText = member.name;
-    document.getElementById('sb-photo').src = member.photo;
     document.getElementById('sb-enname').innerText = member.enName || '---';
     document.getElementById('sb-gender').innerText = member.gender === 'M' ? '男' : '女';
     document.getElementById('sb-birthday').innerText = member.birthday;
+    document.getElementById('sb-photo').src = member.photo;
+    document.getElementById('sb-bio').innerText = member.bio || '尚無簡介資料。';
+    document.getElementById('sb-relationship').innerText = `與 黃兆宏 的關係：${calculateRelation(member)}`;
     
-    // 計算與「根節點(P001)」的關係作為示範
-    const rel = getRelationship(member.id, familyData[0]); 
-    // 您可以在 HTML 補一個 <p id="sb-rel"></p> 來顯示這個 rel
-    
-    document.getElementById('sidebar').style.display = 'block';
+    const sidebar = document.getElementById('sidebar');
+    sidebar.style.display = 'block';
 }
 
 function closeSidebar() {
     document.getElementById('sidebar').style.display = 'none';
 }
-}
+
+window.onresize = () => location.reload(); // 視窗縮放時重新整理以校正位置
 </script>
 </body>
 </html>
-
