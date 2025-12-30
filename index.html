@@ -2,168 +2,107 @@
 <html lang="zh-TW">
 <head>
     <meta charset="UTF-8">
-    <title>家族數位族譜 - 診斷與容錯版</title>
+    <title>家族族譜 - 強制偵錯版</title>
     <script src="https://d3js.org/d3.v7.min.js"></script>
     <style>
-        :root { --male-color: #4A90E2; --female-color: #F5A623; }
-        body { font-family: "Microsoft JhengHei", sans-serif; background: #f4f7f9; margin: 0; overflow: hidden; }
-        #canvas { width: 100vw; height: 100vh; }
-        .node circle { stroke: #fff; stroke-width: 3px; cursor: pointer; transition: 0.3s; }
-        .node text { font-size: 14px; font-weight: bold; fill: #333; pointer-events: none; }
-        .link { fill: none; stroke: #cbd5e0; stroke-width: 2px; }
-        .active-anchor { stroke: #2ecc71 !important; stroke-width: 6px !important; }
-        /* 錯誤診斷面板 */
-        #debug-panel { 
-            position: fixed; bottom: 10px; left: 10px; background: rgba(255,0,0,0.8); 
-            color: white; padding: 10px; border-radius: 5px; font-size: 12px; 
-            max-width: 300px; display: none; z-index: 2000;
-        }
-        .sidebar { position: fixed; right: 0; top: 0; width: 300px; height: 100%; background: white; box-shadow: -5px 0 15px rgba(0,0,0,0.1); padding: 25px; display: none; z-index: 100; }
+        body { font-family: sans-serif; background: #222; color: #0f0; margin: 20px; }
+        #status-monitor { background: #000; border: 1px solid #0f0; padding: 15px; height: 200px; overflow-y: scroll; font-family: monospace; }
+        #canvas-container { margin-top: 20px; background: #fff; width: 100%; height: 500px; display: none; }
+        .error { color: #f00; font-weight: bold; }
     </style>
 </head>
 <body>
 
-<div id="debug-panel"></div>
-<div id="loading" style="position:fixed; top:50%; left:50%; transform:translate(-50%,-50%);">系統診斷中...</div>
-<div id="canvas"></div>
+    <h2>🛠️ 系統後台診斷監視器</h2>
+    <div id="status-monitor">正在啟動引擎...</div>
 
-<div id="sidebar" class="sidebar">
-    <button onclick="this.parentElement.style.display='none'">✕</button>
-    <div id="sb-content" style="text-align:center; margin-top:20px;">
-        <img id="sb-photo" style="width:120px; height:120px; border-radius:50%; object-fit:cover; border:2px solid #ddd;">
-        <h2 id="sb-name"></h2>
-        <div id="sb-info" style="text-align:left; margin-top:20px;"></div>
+    <div id="canvas-container">
+        <svg id="canvas" style="width:100%; height:100%"></svg>
     </div>
-</div>
 
 <script>
 const SPREADSHEET_URL = 'https://docs.google.com/spreadsheets/d/e/2PACX-1vSV9UA8RtEJ3d2_Tb9EsIQPeGCf7egp59josXOT4wU3i7fb461XqSqJd4N5ShN89QOt7apY8rStBh4H/pub?output=csv';
 
-let familyData = [];
-let anchorMember = null;
-const svg = d3.select("#canvas").append("svg").attr("width", window.innerWidth).attr("height", window.innerHeight);
-const g = svg.append("g");
-svg.call(d3.zoom().on("zoom", (e) => g.attr("transform", e.transform)));
-
-function logError(msg) {
-    const panel = document.getElementById("debug-panel");
-    panel.style.display = "block";
-    panel.innerHTML += `<div>⚠️ ${msg}</div>`;
+const monitor = document.getElementById("status-monitor");
+function log(msg, isError = false) {
+    const time = new Date().toLocaleTimeString();
+    monitor.innerHTML += `<div class="${isError ? 'error' : ''}">[${time}] ${msg}</div>`;
+    monitor.scrollTop = monitor.scrollHeight;
 }
 
-async function init() {
+async function start() {
+    log("開始連接 Google Sheets...");
+    
     try {
-        const resp = await fetch(SPREADSHEET_URL + '&t=' + Date.now());
-        const csv = await resp.text();
-        const raw = d3.csvParse(csv);
+        // 1. 測試網路連線
+        const response = await fetch(SPREADSHEET_URL + '&t=' + Date.now());
+        if (!response.ok) throw new Error("網路請求失敗，狀態碼: " + response.status);
         
-        familyData = raw.filter(d => d.ID).map(d => ({
-            id: d.ID.trim(),
-            name: d["姓名 (中)"] || "未命名",
-            gender: d["性別"] || "M",
-            spouse: d["配偶ID"] ? d["配偶ID"].trim() : null,
-            parents: [d["父親ID"], d["母親ID"]].filter(p => p && p.trim() !== "").map(p => p.trim()),
-            photo: d["相片路徑"],
-            birthday: d["出生日期"],
-            bio: d["個人簡介"]
-        }));
+        log("網路連線成功，正在讀取 CSV 內容...");
+        const csvText = await response.text();
+        
+        if (!csvText || csvText.length < 10) {
+            throw new Error("抓到的 CSV 內容為空！請檢查 Google Sheet 是否有資料且已發布。");
+        }
+        
+        log("CSV 內容抓取成功，前 50 字元: " + csvText.substring(0, 50));
 
-        if (familyData.length === 0) throw "表單內無有效資料";
-        anchorMember = familyData[0];
-        document.getElementById("loading").style.display = "none";
-        render();
-    } catch (e) {
-        logError("載入失敗: " + e);
-    }
-}
+        // 2. 解析 CSV
+        const data = d3.csvParse(csvText);
+        log(`解析完成，共找到 ${data.length} 筆成員資料。`);
 
-function render() {
-    g.selectAll("*").remove();
-    const idMap = new Map(familyData.map(d => [d.id, d]));
-    
-    // 檢查 ParentID 是否都存在於 ID 清單中
-    familyData.forEach(d => {
-        d.parents.forEach(pId => {
-            if (!idMap.has(pId)) logError(`成員 [${d.name}] 的父母 ID [${pId}] 不存在`);
-        });
-    });
-
-    // 找出所有家族的起點（根）
-    const spouseSet = new Set(familyData.map(d => d.spouse).filter(s => s));
-    const roots = familyData.filter(d => d.parents.length === 0 && !spouseSet.has(d.id));
-    
-    let currentX = 100;
-    const treeLayout = d3.tree().nodeSize([150, 400]);
-
-    roots.forEach(rootData => {
-        try {
-            const hierarchy = d3.stratify()
-                .id(d => d.id)
-                .parentId(d => {
-                    const firstParent = d.parents[0];
-                    return idMap.has(firstParent) ? firstParent : null;
-                })(getSafeSubtree(rootData.id, idMap));
-
-            const treeRoot = treeLayout(hierarchy);
-            const treeG = g.append("g").attr("transform", `translate(${currentX}, 200)`);
-
-            // 畫線
-            treeG.selectAll(".link").data(treeRoot.links()).join("path")
-                .attr("class", "link")
-                .attr("d", d3.linkHorizontal().x(d => d.y).y(d => d.x));
-
-            // 畫人
-            const nodes = treeG.selectAll(".node").data(treeRoot.descendants()).join("g")
-                .attr("transform", d => `translate(${d.y},${d.x})`);
-
-            nodes.each(function(d) {
-                drawNode(d3.select(this), d.data);
-                // 畫配偶
-                if (d.data.spouse && idMap.has(d.data.spouse)) {
-                    const sp = idMap.get(d.data.spouse);
-                    const spG = treeG.append("g").attr("transform", `translate(${d.y}, ${d.x + 100})`);
-                    drawNode(spG, sp);
-                    treeG.append("line").attr("x1", d.y).attr("y1", d.x + 35).attr("x2", d.y).attr("y2", d.x + 75)
-                         .attr("stroke", "#ffb6c1").attr("stroke-dasharray", "4");
-                }
+        if (data.length > 0) {
+            log("欄位名稱偵測: " + Object.keys(data[0]).join(", "));
+            
+            // 檢查關鍵欄位是否對應
+            const requiredFields = ["ID", "姓名 (中)", "性別"];
+            requiredFields.forEach(f => {
+                if (!(f in data[0])) log(`警告：找不到欄位 [${f}]，請檢查表單標頭！`, true);
             });
-            currentX += 1000;
-        } catch (e) {
-            logError(`樹狀分支 [${rootData.name}] 構建失敗: ${e.message}`);
-        }
-    });
-}
 
-function getSafeSubtree(rootId, idMap) {
-    const subset = new Set();
-    const stack = [rootId];
-    while(stack.length > 0) {
-        const id = stack.pop();
-        const m = idMap.get(id);
-        if (m && !subset.has(m)) {
-            subset.add(m);
-            familyData.filter(d => d.parents.includes(id)).forEach(c => stack.push(c.id));
+            // 啟動主畫面
+            document.getElementById("canvas-container").style.display = "block";
+            log("正在啟動畫布...");
+            drawSimpleTree(data);
         }
+
+    } catch (e) {
+        log("❌ 關鍵錯誤: " + e.message, true);
+        console.error(e);
     }
-    return Array.from(subset);
 }
 
-function drawNode(el, m) {
-    el.append("circle").attr("r", 35)
-        .attr("fill", m.gender === 'M' ? 'var(--male-color)' : 'var(--female-color)')
-        .classed("active-anchor", m.id === anchorMember.id)
-        .on("click", () => { anchorMember = m; render(); showSidebar(m); });
-    el.append("text").attr("dy", "55px").attr("text-anchor", "middle").text(m.name);
+function drawSimpleTree(rawData) {
+    // 這裡跑最簡單的方塊繪製，不跑複雜階層，先求「看得到人」
+    const svg = d3.select("#canvas");
+    svg.selectAll("*").remove();
+    
+    const g = svg.append("g").attr("transform", "translate(50,50)");
+    
+    g.selectAll("rect")
+        .data(rawData)
+        .enter()
+        .append("rect")
+        .attr("x", (d, i) => (i % 5) * 150)
+        .attr("y", (d, i) => Math.floor(i / 5) * 100)
+        .attr("width", 120)
+        .attr("height", 60)
+        .attr("fill", d => d["性別"] === "M" ? "#4A90E2" : "#F5A623");
+
+    g.selectAll("text")
+        .data(rawData)
+        .enter()
+        .append("text")
+        .attr("x", (d, i) => (i % 5) * 150 + 60)
+        .attr("y", (d, i) => Math.floor(i / 5) * 100 + 35)
+        .attr("text-anchor", "middle")
+        .attr("fill", "white")
+        .text(d => d["姓名 (中)"]);
+    
+    log("畫布繪製完成！如果你看到白色區塊內有彩色方塊，代表資料運作正常。");
 }
 
-function showSidebar(m) {
-    document.getElementById("sb-photo").src = m.photo || "";
-    document.getElementById("sb-name").innerText = m.name;
-    document.getElementById("sb-info").innerHTML = `<p>生日: ${m.birthday || '---'}</p><p>簡介: ${m.bio || '---'}</p>`;
-    document.getElementById("sidebar").style.display = "block";
-}
-
-init();
+start();
 </script>
 </body>
 </html>
