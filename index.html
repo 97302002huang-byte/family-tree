@@ -2,37 +2,34 @@
 <html lang="zh-TW">
 <head>
     <meta charset="UTF-8">
-    <title>互動式數位家族樹 - 萬人容錯版</title>
+    <title>互動式數位家族樹 - 祖源回溯版</title>
     <script src="https://d3js.org/d3.v7.min.js"></script>
     <style>
         :root { --male-color: #4A90E2; --female-color: #F5A623; }
         body { font-family: "Microsoft JhengHei", sans-serif; background-color: #f0f2f5; margin: 0; overflow: hidden; }
-        #canvas { width: 100vw; height: 100vh; background: #f8f9fa; }
+        #canvas { width: 100vw; height: 100vh; }
         .node circle { stroke: #fff; stroke-width: 3px; cursor: pointer; transition: 0.3s; }
         .node text { font-size: 14px; font-weight: bold; fill: #333; pointer-events: none; }
         .link { fill: none; stroke: #cbd5e0; stroke-width: 2px; }
-        .tooltip { 
-            position: absolute; padding: 10px; background: rgba(0,0,0,0.8); 
-            color: white; border-radius: 6px; font-size: 13px; display: none; z-index: 1000; 
-        }
-        .sidebar { position: fixed; right: 0; top: 0; width: 300px; height: 100%; background: white; box-shadow: -5px 0 15px rgba(0,0,0,0.1); padding: 20px; display: none; z-index: 100; overflow-y: auto; }
+        .tooltip { position: absolute; padding: 10px; background: rgba(0,0,0,0.8); color: white; border-radius: 6px; font-size: 13px; display: none; z-index: 1000; }
+        .sidebar { position: fixed; right: 0; top: 0; width: 320px; height: 100%; background: white; box-shadow: -5px 0 15px rgba(0,0,0,0.1); padding: 25px; display: none; z-index: 100; overflow-y: auto; }
         .active-anchor { stroke: #2ecc71 !important; stroke-width: 6px !important; }
     </style>
 </head>
 <body>
 
-<div id="loading" style="position:fixed; top:50%; left:50%; transform:translate(-50%,-50%);">資料同步中...</div>
+<div id="loading" style="position:fixed; top:50%; left:50%; transform:translate(-50%,-50%); font-size:1.2rem;">正在重新編排家族圖譜...</div>
 <div id="tooltip" class="tooltip"></div>
 <div id="canvas"></div>
 
 <div id="sidebar" class="sidebar">
-    <button onclick="this.parentElement.style.display='none'">✕ Close</button>
+    <button onclick="this.parentElement.style.display='none'" style="float:right">✕</button>
     <div style="text-align:center; margin-top:20px;">
-        <img id="sb-photo" style="width:120px; height:120px; border-radius:50%; object-fit:cover;">
+        <img id="sb-photo" style="width:120px; height:120px; border-radius:50%; object-fit:cover; border:3px solid #eee;">
         <h2 id="sb-name"></h2>
     </div>
     <hr>
-    <div id="sb-details"></div>
+    <div id="sb-info" style="line-height: 1.8;"></div>
 </div>
 
 <script>
@@ -40,88 +37,108 @@ const SPREADSHEET_URL = 'https://docs.google.com/spreadsheets/d/e/2PACX-1vSV9UA8
 
 let familyData = [];
 let anchorMember = null;
-const svg = d3.select("#canvas").append("svg").attr("width", window.innerWidth).attr("height", window.innerHeight);
+const width = window.innerWidth, height = window.innerHeight;
+
+const svg = d3.select("#canvas").append("svg")
+    .attr("width", width).attr("height", height)
+    .call(d3.zoom().scaleExtent([0.1, 3]).on("zoom", (e) => g.attr("transform", e.transform)))
+    .append("g");
+
 const g = svg.append("g").attr("transform", "translate(100, 100)");
-svg.call(d3.zoom().on("zoom", (e) => g.attr("transform", e.transform)));
 
 async function init() {
-    const response = await fetch(SPREADSHEET_URL + '&cache=' + new Date().getTime()); // 加時間戳避免快取
-    const csvText = await response.text();
-    const raw = d3.csvParse(csvText);
-    
-    familyData = raw.filter(d => d.ID).map(d => ({
-        id: d.ID.trim(),
-        name: d["姓名 (中)"],
-        gender: d["性別"],
-        parents: [d["父親ID"], d["母親ID"]].filter(p => p && p.trim() !== ""),
-        spouse: d["配偶ID"] ? d["配偶ID"].trim() : null,
-        photo: d["相片路徑"],
-        birthday: d["出生日期"],
-        bio: d["個人簡介"]
-    }));
+    try {
+        const response = await fetch(SPREADSHEET_URL + '&t=' + Date.now());
+        const csvText = await response.text();
+        familyData = d3.csvParse(csvText).filter(d => d.ID).map(d => ({
+            id: d.ID.trim(),
+            name: d["姓名 (中)"],
+            enName: d["姓名 (英)"],
+            gender: d["性別"],
+            spouse: d["配偶ID"] ? d["配偶ID"].trim() : null,
+            parents: [d["父親ID"], d["母親ID"]].filter(p => p && p.trim() !== "").map(p => p.trim()),
+            photo: d["相片路徑"],
+            birthday: d["出生日期"],
+            bio: d["個人簡介"]
+        }));
 
-    anchorMember = familyData[0];
-    document.getElementById("loading").style.display = "none";
-    updateTree();
+        anchorMember = familyData[0];
+        document.getElementById("loading").style.display = "none";
+        updateTree();
+    } catch (e) {
+        document.getElementById("loading").innerText = "載入失敗，請確認 CSV 網址。";
+    }
 }
 
 function updateTree() {
     g.selectAll("*").remove();
 
-    // 核心邏輯修正：手動計算佈局而非強迫使用 d3.stratify
-    // 為了處理 100 人且可能斷層的資料，我們改用分層渲染
-    const idMap = new Map(familyData.map(d => [d.id, d]));
-    const spouseIds = new Set(familyData.map(d => d.spouse).filter(id => id));
+    // 建立 ID 索引與配偶名單
+    const memberMap = new Map(familyData.map(d => [d.id, d]));
+    const isSpouseOfSomeone = new Set(familyData.map(d => d.spouse).filter(id => id));
 
-    // 過濾出主要節點（非配偶）
-    const mainNodes = familyData.filter(d => !spouseIds.has(d.id) || d.id === familyData[0].id);
+    // 找出所有「真正的祖先」：即沒有父母 ID 的人，且不只是別人的配偶
+    const roots = familyData.filter(d => d.parents.length === 0 && !isSpouseOfSomeone.has(d.id));
     
-    // 建立虛擬分層：根據沒有父母的人作為起始點
-    const roots = mainNodes.filter(d => d.parents.length === 0);
-    
-    let currentY = 0;
-    roots.forEach((rootMem, index) => {
-        const treeData = buildHierarchy(rootMem, mainNodes);
-        if(!treeData) return;
-        
-        const root = d3.hierarchy(treeData);
-        const treeLayout = d3.tree().nodeSize([120, 300]);
-        treeLayout(root);
+    // 如果找不到絕對祖先，就用第一個成員（保險機制）
+    const effectiveRoots = roots.length > 0 ? roots : [familyData[0]];
 
-        const treeGroup = g.append("g").attr("transform", `translate(0, ${currentY})`);
-        
+    let currentYOffset = 0;
+    const treeLayout = d3.tree().nodeSize([140, 350]);
+
+    effectiveRoots.forEach(rootMem => {
+        const hierarchyData = d3.stratify()
+            .id(d => d.id)
+            .parentId(d => d.parents[0])(getSubTree(rootMem.id, familyData));
+
+        const rootNode = treeLayout(hierarchyData);
+        const treeG = g.append("g").attr("transform", `translate(0, ${currentYOffset})`);
+
         // 畫線
-        treeGroup.selectAll(".link").data(root.links()).join("path").attr("class", "link")
+        treeG.selectAll(".link").data(rootNode.links()).join("path")
+            .attr("class", "link")
             .attr("d", d3.linkHorizontal().x(d => d.y).y(d => d.x));
 
-        // 畫人
-        const nodes = treeGroup.selectAll(".node").data(root.descendants()).join("g")
+        // 畫節點
+        const nodes = treeG.selectAll(".node").data(rootNode.descendants()).join("g")
             .attr("transform", d => `translate(${d.y},${d.x})`);
 
         nodes.each(function(d) {
-            drawMember(d3.select(this), d.data);
-            if(d.data.spouse) {
-                const sp = idMap.get(d.data.spouse);
-                if(sp) {
-                    const spG = d3.select(this.parentNode).append("g")
-                        .attr("transform", `translate(${d.y}, ${d.x + 100})`);
-                    drawMember(spG, sp);
+            renderNode(d3.select(this), d.data);
+            
+            // 繪製配偶
+            if (d.data.spouse) {
+                const sp = memberMap.get(d.data.spouse);
+                if (sp) {
+                    const spG = treeG.append("g").attr("transform", `translate(${d.y}, ${d.x + 110})`);
+                    renderNode(spG, sp);
+                    treeG.append("line")
+                        .attr("x1", d.y).attr("y1", d.x + 35).attr("x2", d.y).attr("y2", d.x + 75)
+                        .attr("stroke", "#ffb6c1").attr("stroke-width", 2).attr("stroke-dasharray", "4");
                 }
             }
         });
-        currentY += 500; // 每個家族分支垂直隔開，避免重疊
+
+        currentYOffset += rootNode.leaves().length * 150 + 200;
     });
 }
 
-function buildHierarchy(member, all) {
-    const children = all.filter(d => d.parents.includes(member.id));
-    return {
-        ...member,
-        children: children.map(c => buildHierarchy(c, all))
-    };
+// 遞迴獲取該祖先下的所有子孫資料
+function getSubTree(rootId, data) {
+    const result = new Set();
+    const stack = [rootId];
+    while(stack.length > 0) {
+        const id = stack.pop();
+        const mem = data.find(d => d.id === id);
+        if(mem && !result.has(mem)) {
+            result.add(mem);
+            data.filter(d => d.parents.includes(id)).forEach(c => stack.push(c.id));
+        }
+    }
+    return Array.from(result);
 }
 
-function drawMember(el, m) {
+function renderNode(el, m) {
     el.append("circle").attr("r", 35)
         .attr("fill", m.gender === 'M' ? 'var(--male-color)' : 'var(--female-color)')
         .classed("active-anchor", m.id === anchorMember.id)
@@ -130,15 +147,28 @@ function drawMember(el, m) {
     el.append("text").attr("dy", "55px").attr("text-anchor", "middle").text(m.name);
     
     el.on("mouseover", (e) => {
-        d3.select("#tooltip").style("display", "block").text(m.name)
-            .style("left", (e.pageX+10)+"px").style("top", (e.pageY-10)+"px");
+        d3.select("#tooltip").style("display", "block")
+            .html(`<strong>${m.name}</strong><br>關係：${calculateRel(m)}`)
+            .style("left", (e.pageX+15)+"px").style("top", (e.pageY-10)+"px");
     }).on("mouseout", () => d3.select("#tooltip").style("display", "none"));
 }
 
+function calculateRel(target) {
+    if (target.id === anchorMember.id) return "本人";
+    if (anchorMember.spouse === target.id) return "配偶";
+    if (target.parents.includes(anchorMember.id)) return "子女";
+    if (anchorMember.parents.includes(target.id)) return "父母";
+    return "家族成員";
+}
+
 function showSidebar(m) {
-    d3.select("#sb-photo").attr("src", m.photo);
+    d3.select("#sb-photo").attr("src", m.photo || "");
     d3.select("#sb-name").text(m.name);
-    d3.select("#sb-details").html(`<p>生日: ${m.birthday}</p><p>簡介: ${m.bio}</p>`);
+    d3.select("#sb-info").html(`
+        <p><strong>英文名：</strong>${m.enName || '無'}</p>
+        <p><strong>生日：</strong>${m.birthday || '---'}</p>
+        <p><strong>簡介：</strong>${m.bio || '---'}</p>
+    `);
     d3.select("#sidebar").style("display", "block");
 }
 
