@@ -2,7 +2,7 @@
 <html lang="zh-TW">
 <head>
     <meta charset="UTF-8">
-    <title>家族數位族譜 v8.5 - 全家福版</title>
+    <title>家族數位族譜 v8.7</title>
     <script src="https://d3js.org/d3.v7.min.js"></script>
     <style>
         :root { --gold: #8b5a2b; --spouse: #e67e22; --active: #3498db; }
@@ -19,7 +19,7 @@
 <body>
 <div id="tree-container"></div>
 <div id="info-panel">
-    <div id="focus-display" style="background:var(--active); color:white; padding:10px; border-radius:5px; text-align:center; margin-bottom:20px; font-weight:bold;">同步中...</div>
+    <div id="focus-display" style="background:var(--active); color:white; padding:10px; border-radius:5px; text-align:center; margin-bottom:20px; font-weight:bold;">當前視角</div>
     <div id="detail-content"></div>
 </div>
 
@@ -28,18 +28,19 @@
 
     d3.csv(CSV_URL).then(data => {
         const row1 = data[0];
-        const getCol = (names) => Object.keys(row1).find(k => names.some(n => k.replace(/\s+/g, '').includes(n)));
+        const getCol = (names) => Object.keys(row1).find(k => names.some(n => k.includes(n)));
         const keys = { id: getCol(['ID']), name: getCol(['姓名']), gender: getCol(['性別']), spouse: getCol(['配偶']), father: getCol(['父親']), mother: getCol(['母親']), photo: getCol(['照片']) };
 
-        const fixId = (id) => id ? id.trim().toUpperCase().replace(/O/g, '0') : "";
+        // 僅做基本的去空白處理
+        const cleanId = (id) => id ? id.trim() : "";
 
         const familyData = data.map(d => ({
-            id: fixId(d[keys.id]),
+            id: cleanId(d[keys.id]),
             name: d[keys.name] ? d[keys.name].trim() : "未命名",
             gender: d[keys.gender] ? d[keys.gender].trim().toUpperCase() : 'M',
             photoId: keys.photo && d[keys.photo] ? d[keys.photo].trim() : '',
-            parents: [fixId(d[keys.father])].filter(x => x),
-            isSpouseOf: fixId(d[keys.spouse]) || null
+            parents: [cleanId(d[keys.father])].filter(x => x),
+            isSpouseOf: cleanId(d[keys.spouse]) || null
         })).filter(d => d.id);
 
         let currentFocus = familyData[0];
@@ -50,53 +51,48 @@
 
         function render() {
             g.selectAll("*").remove();
-            
-            // 找出所有人的 ID 方便比對
-            const allIds = familyData.map(d => d.id);
-            
-            // 繪圖核心：確保每個人都有一個父節點（即使是虛擬的）
+            const idList = familyData.map(d => d.id);
             const bloodline = familyData.filter(d => !d.isSpouseOf);
+
+            // 確保每個血親都有父級，若無則連向 V_ROOT
             bloodline.forEach(d => {
-                if (d.parents.length === 0 || !allIds.includes(d.parents[0])) {
-                    d.parents = ["VIRTUAL_ROOT"];
+                if (d.parents.length === 0 || !idList.includes(d.parents[0])) {
+                    d.parents = ["V_ROOT"];
                 }
             });
 
-            const drawData = [...bloodline, { id: "VIRTUAL_ROOT", name: "", parents: [] }];
+            const drawData = [...bloodline, { id: "V_ROOT", name: "", parents: [] }];
 
             try {
                 const root = d3.stratify().id(d => d.id).parentId(d => d.parents[0])(drawData);
-                d3.tree().nodeSize([150, 300])(root);
+                d3.tree().nodeSize([150, 400])(root);
 
-                // 畫血親連線
-                g.selectAll(".link").data(root.links().filter(l => l.source.id !== "VIRTUAL_ROOT"))
+                // 畫線
+                g.selectAll(".link").data(root.links().filter(l => l.source.id !== "V_ROOT"))
                     .enter().append("path").attr("class", "link")
                     .attr("d", d3.linkHorizontal().x(d => d.y).y(d => d.x));
 
-                // 畫節點
-                const nodes = g.selectAll(".node").data(root.descendants().filter(d => d.id !== "VIRTUAL_ROOT"))
+                // 畫點
+                const nodes = g.selectAll(".node").data(root.descendants().filter(d => d.id !== "V_ROOT"))
                     .enter().append("g").attr("transform", d => `translate(${d.y}, ${d.x})`);
 
                 nodes.each(function(d) {
                     const el = d3.select(this);
-                    // 畫本人
                     drawNode(el, d.data, 0);
                     
-                    // 尋找並畫出配偶 (修正：確保配偶一定會出現)
+                    // 畫配偶 (優先檢查是否有人以他為配偶)
                     const spouse = familyData.find(f => f.isSpouseOf === d.data.id || d.data.isSpouseOf === f.id);
                     if (spouse && spouse.id !== d.data.id) {
-                        el.append("line").attr("class", "marriage-line").attr("x1", 0).attr("y1", 45).attr("x2", 0).attr("y2", 105);
-                        drawNode(el, spouse, 150);
+                        el.append("line").attr("class", "marriage-line").attr("x1", 0).attr("y1", 45).attr("x2", 0).attr("y2", 115);
+                        drawNode(el, spouse, 160);
                     }
                 });
-            } catch (err) {
-                console.error("繪圖錯誤:", err);
-            }
+            } catch (err) { console.error(err); }
         }
 
         function drawNode(parent, data, y) {
             const n = parent.append("g").attr("class", `node ${data.id === currentFocus.id ? 'focused' : ''}`).attr("transform", `translate(0, ${y})`)
-                .on("click", () => { currentFocus = data; document.getElementById('focus-display').innerText = `當前基準點：${data.name}`; render(); updateUI(data); });
+                .on("click", () => { currentFocus = data; document.getElementById('focus-display').innerText = `當前視角：${data.name}`; render(); updateUI(data); });
             n.append("circle").attr("r", 45);
             n.append("image").attr("xlink:href", `https://drive.google.com/uc?export=view&id=${data.photoId}`).attr("x",-40).attr("y",-40).attr("width",80).attr("height",80).attr("clip-path","circle(40px at 40px 40px)")
                 .on("error", function() { d3.select(this).attr("xlink:href", `https://ui-avatars.com/api/?name=${encodeURIComponent(data.name)}&background=8b5a2b&color=fff`); });
@@ -110,7 +106,7 @@
 
         render();
         updateUI(currentFocus);
-        document.getElementById('focus-display').innerText = `當前基準點：${currentFocus.name}`;
+        document.getElementById('focus-display').innerText = `當前視角：${currentFocus.name}`;
     });
 </script>
 </body>
