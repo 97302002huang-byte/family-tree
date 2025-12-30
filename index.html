@@ -3,186 +3,226 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>家族數位族譜 - 重力分層版</title>
+    <title>家族數位族譜 - 穩定連線版</title>
     <script src="https://d3js.org/d3.v7.min.js"></script>
     <style>
-        /* --- 樣式設定區 (CSS) --- */
-        body { 
-            margin: 0; 
-            overflow: hidden; 
-            background: #1a1a1a; /* 深色背景保護眼睛 */
-            font-family: "Microsoft JhengHei", sans-serif; 
-        }
+        body { margin: 0; overflow: hidden; background: #1a1a1a; font-family: "Microsoft JhengHei", sans-serif; }
+        #canvas { width: 100vw; height: 100vh; cursor: move; }
+        .node circle { stroke: #fff; stroke-width: 2px; transition: all 0.3s ease; cursor: grab; }
+        .node:hover circle { stroke: #ffd700; stroke-width: 4px; r: 25px; }
+        .node:active circle { cursor: grabbing; }
+        .node text { font-size: 13px; fill: #eee; pointer-events: none; text-shadow: 2px 2px 4px #000; font-weight: bold; }
+        .link { stroke-opacity: 0.6; stroke-width: 1.5px; }
         
-        #canvas { 
-            width: 100vw; 
-            height: 100vh; 
-            cursor: move; /* 提示可以拖拉畫布 */
-        }
-
-        /* 節點樣式 */
-        .node circle { 
-            stroke: #fff; 
-            stroke-width: 2px; 
-            transition: all 0.3s ease;
-            cursor: grab;
-        }
-        .node:hover circle { 
-            stroke: #ffd700; /* 滑鼠懸停變成金框 */
-            stroke-width: 4px; 
-            r: 25px; /* 稍微放大 */
-        }
-        .node:active circle {
-            cursor: grabbing;
-        }
-
-        /* 文字標籤 */
-        .node text { 
-            font-size: 13px; 
-            fill: #eee; 
-            pointer-events: none; /* 讓滑鼠點擊穿透文字直接點到圓圈 */
-            text-shadow: 2px 2px 4px #000; /* 黑色陰影讓文字更清晰 */
-            font-weight: bold;
-        }
-
-        /* 連線樣式 */
-        .link { 
-            stroke-opacity: 0.6; 
-            stroke-width: 1.5px; 
-        }
-
-        /* 狀態列 */
+        /* 進度條樣式 */
         #status-bar { 
-            position: fixed; 
-            top: 10px; 
-            left: 10px; 
-            color: #00ff9d; 
-            background: rgba(0, 0, 0, 0.8); 
-            padding: 10px 15px; 
-            border-radius: 8px; 
-            border: 1px solid #333;
-            font-size: 14px;
-            z-index: 100;
-            box-shadow: 0 4px 6px rgba(0,0,0,0.3);
+            position: fixed; top: 10px; left: 10px; color: #00ff9d; background: rgba(0, 0, 0, 0.85); 
+            padding: 12px 20px; border-radius: 8px; border: 1px solid #333; font-size: 14px; z-index: 100;
+            box-shadow: 0 4px 10px rgba(0,0,0,0.5); font-family: monospace;
         }
     </style>
 </head>
 <body>
 
-    <div id="status-bar">正在連線至家族資料庫...</div>
-    
+    <div id="status-bar">準備連線至 Google Sheets...</div>
     <div id="canvas"></div>
 
 <script>
     // ==========================================
-    // 1. 系統參數設定
+    // 1. 設定區
     // ==========================================
     const width = window.innerWidth;
     const height = window.innerHeight;
-    
-    // 視覺參數
-    const COLOR_MALE = '#4A90E2';   // 男性藍色
-    const COLOR_FEMALE = '#F5A623'; // 女性橘色
-    const LEVEL_HEIGHT = 150;       // 每一代的垂直間距 (px)
-    
-    // 資料來源 (Google Sheets CSV)
+    const COLOR_MALE = '#4A90E2';
+    const COLOR_FEMALE = '#F5A623';
+    const LEVEL_HEIGHT = 150; // 每一代的垂直距離
+
+    // 您的 Google Sheet CSV 連結 (確保沒動過)
     const SPREADSHEET_URL = 'https://docs.google.com/spreadsheets/d/e/2PACX-1vSV9UA8RtEJ3d2_Tb9EsIQi_BW_O4gE3TJqU0uE-c_7dFuwETvY6MTAg86K3Z43G3Oq9wJ2T-Wc58WJ/pub?output=csv';
 
+    // 狀態更新函式
+    function updateStatus(msg, isError = false) {
+        const el = document.getElementById("status-bar");
+        el.innerText = `> ${msg}`;
+        if (isError) el.style.color = "#ff4444";
+        console.log(`[System] ${msg}`);
+    }
+
     // ==========================================
-    // 2. 初始化畫布 (Canvas)
+    // 2. 初始化畫布
     // ==========================================
     const svg = d3.select("#canvas").append("svg")
         .attr("width", width)
         .attr("height", height)
-        .call(d3.zoom().on("zoom", (event) => {
+        .call(d3.zoom().scaleExtent([0.1, 4]).on("zoom", (event) => {
             container.attr("transform", event.transform);
         }));
 
     const container = svg.append("g");
 
     // ==========================================
-    // 3. 核心邏輯 (Main Logic)
+    // 3. 主程式邏輯
     // ==========================================
+    updateStatus("正在下載 CSV 資料...");
+
     d3.csv(SPREADSHEET_URL).then(raw_data => {
-        updateStatus(`讀取成功，共 ${raw_data.length} 筆資料，正在計算輩分...`);
+        
+        updateStatus(`下載成功！共 ${raw_data.length} 筆資料。正在清洗...`);
 
-        // --- A. 資料清洗 ---
+        // --- A. 資料清洗與防呆 ---
         const nodes = raw_data.map(d => ({
-            id: d['ID'],
-            name: d['姓名 (中)'] || d['姓名 (英)'] || '未知',
-            gender: d['性別'] ? d['性別'].toUpperCase() : 'M',
-            fatherId: d['父親ID'],
-            motherId: d['母親ID'],
-            spouseId: d['配偶ID'],
-            img: d['相片路徑'],
-            level: null // 這是我們接下來要計算的
-        })).filter(d => d.id); // 濾掉沒有 ID 的空行
+            id: d['ID'] ? d['ID'].trim() : null, // 去除空白
+            name: d['姓名 (中)'] || d['姓名 (英)'] || 'Unknown',
+            gender: d['性別'] ? d['性別'].trim().toUpperCase() : 'M',
+            fatherId: d['父親ID'] ? d['父親ID'].trim() : null,
+            motherId: d['母親ID'] ? d['母親ID'].trim() : null,
+            spouseId: d['配偶ID'] ? d['配偶ID'].trim() : null,
+            level: null 
+        })).filter(d => d.id); // 濾掉完全沒 ID 的空行
 
-        // 建立快速查找表 (Map)
+        // 建立 Map 查找表
         const nodeMap = new Map(nodes.map(n => [n.id, n]));
 
-        // --- B. 演算法：遞迴計算輩分 (Generational Gravity) ---
+        updateStatus("資料清洗完成，開始計算輩分(Level)...");
+
+        // --- B. 演算法：安全版遞迴計算 (Safe Recursive Level Calculation) ---
         function calculateLevel(nodeId, visited = new Set()) {
-            if (!nodeId || !nodeMap.has(nodeId)) return 0; // 找不到人，當作第一代
-            if (visited.has(nodeId)) return 0; // 防止無窮迴圈
+            // 安全檢查 1: ID 不存在或找不到人 -> 回傳 0 (當作祖先)
+            if (!nodeId || !nodeMap.has(nodeId)) return 0;
             
+            // 安全檢查 2: 防止無窮迴圈 (例如 A是B爸爸, B是A爸爸)
+            if (visited.has(nodeId)) return 0;
+
             const node = nodeMap.get(nodeId);
-            if (node.level !== null) return node.level; // 已經算過，直接回傳
+            // 優化: 如果已經算過，直接回傳
+            if (node.level !== null) return node.level;
 
             visited.add(nodeId);
 
-            // 遞迴往上找父母
             let fatherLevel = -1;
             let motherLevel = -1;
 
-            if (node.fatherId) fatherLevel = calculateLevel(node.fatherId, new Set(visited));
-            if (node.motherId) motherLevel = calculateLevel(node.motherId, new Set(visited));
+            // 遞迴尋找 (如果父親ID存在，且在Map中找得到人，才遞迴)
+            if (node.fatherId && nodeMap.has(node.fatherId)) {
+                fatherLevel = calculateLevel(node.fatherId, new Set(visited));
+            }
+            if (node.motherId && nodeMap.has(node.motherId)) {
+                motherLevel = calculateLevel(node.motherId, new Set(visited));
+            }
 
-            // 自己的輩分 = 父母中較大的輩分 + 1
-            // 如果沒父母，預設 Math.max 回傳 -1，加 1 後變成 0 (第一代)
+            // 自己 = 父母最大值 + 1
+            // 如果父母都沒找到 (-1)，則自己變成 0 (第一代)
             const myLevel = Math.max(fatherLevel, motherLevel) + 1;
             
             node.level = myLevel;
             return myLevel;
         }
 
-        // 第一輪：計算有血緣者的輩分
-        nodes.forEach(node => calculateLevel(node.id));
-
-        // 第二輪：配偶校正 (Spouse Alignment)
-        // 解決「嫁進來/入贅」的人如果沒有父母資料，會變成第0代的錯誤
-        nodes.forEach(node => {
-            if (node.level === 0 && node.spouseId && nodeMap.has(node.spouseId)) {
-                const spouse = nodeMap.get(node.spouseId);
-                // 如果配偶有算出來的輩分，就跟隨配偶
-                if (spouse.level && spouse.level > 0) {
-                    node.level = spouse.level;
+        // 執行計算
+        try {
+            nodes.forEach(node => calculateLevel(node.id));
+            
+            // 配偶校正
+            nodes.forEach(node => {
+                if (node.level === 0 && node.spouseId && nodeMap.has(node.spouseId)) {
+                    const spouse = nodeMap.get(node.spouseId);
+                    if (spouse.level > 0) node.level = spouse.level;
                 }
-            }
-        });
+            });
+        } catch (err) {
+            console.error(err);
+            updateStatus("輩分計算發生錯誤，將使用預設顯示", true);
+        }
+
+        updateStatus("輩分計算完成，啟動物理引擎...");
 
         // --- C. 建立連結 (Links) ---
         const links = [];
         nodes.forEach(node => {
-            // 父子連線
+            // 只建立「雙方都存在」的連結，避免報錯
             if (node.fatherId && nodeMap.has(node.fatherId)) {
                 links.push({ source: node.fatherId, target: node.id, type: 'parent' });
             }
-            // 母子連線
             if (node.motherId && nodeMap.has(node.motherId)) {
                 links.push({ source: node.motherId, target: node.id, type: 'parent' });
             }
-            // 配偶連線 (為避免重複，只由 ID 小的連向 ID 大的)
             if (node.spouseId && nodeMap.has(node.spouseId)) {
-                if (node.id < node.spouseId) {
+                if (node.id < node.spouseId) { // 避免重複連線
                     links.push({ source: node.id, target: node.spouseId, type: 'spouse' });
                 }
             }
         });
 
-        // --- D. 物理模擬引擎設定 (Physics Engine) ---
+        // --- D. 物理模擬 ---
         const simulation = d3.forceSimulation(nodes)
-            // 1. 連結力：配偶靠近一點(50)，親子遠一點(100)
-            .force("link", d3.forceLink(links).id(d => d.id).distance(d => d.type === 'spouse' ? 50 : 100))
-            // 2. 排斥力：避免大家擠在一起
-            .force("charge", d3.forceManyBody().strength(-500))
+            .force("link", d3.forceLink(links).id(d => d.id).distance(d => d.type === 'spouse' ? 60 : 120))
+            .force("charge", d3.forceManyBody().strength(-600)) // 排斥力增強
+            .force("collide", d3.forceCollide().radius(40))
+            .force("center", d3.forceX(width / 2).strength(0.08))
+            // 重力場：如果有算錯導致 level 為空，預設放到 0 層
+            .force("y", d3.forceY(d => ((d.level || 0) * LEVEL_HEIGHT) + 100).strength(2.5));
+
+        // --- E. 繪圖 ---
+        const link = container.append("g")
+            .selectAll(".link")
+            .data(links)
+            .join("line")
+            .attr("class", "link")
+            .attr("stroke", d => d.type === 'spouse' ? '#ff69b4' : '#888')
+            .attr("stroke-dasharray", d => d.type === 'spouse' ? '5,5' : '0');
+
+        const node = container.append("g")
+            .selectAll(".node")
+            .data(nodes)
+            .join("g")
+            .attr("class", "node")
+            .call(d3.drag()
+                .on("start", dragstarted)
+                .on("drag", dragged)
+                .on("end", dragended));
+
+        node.append("circle")
+            .attr("r", 20)
+            .attr("fill", d => d.gender === 'M' ? COLOR_MALE : COLOR_FEMALE);
+
+        node.append("text")
+            .attr("dy", 35)
+            .attr("text-anchor", "middle")
+            .text(d => d.name);
+
+        simulation.on("tick", () => {
+            link
+                .attr("x1", d => d.source.x)
+                .attr("y1", d => d.source.y)
+                .attr("x2", d => d.target.x)
+                .attr("y2", d => d.target.y);
+
+            node.attr("transform", d => `translate(${d.x},${d.y})`);
+        });
+
+        // 拖拽互動
+        function dragstarted(event, d) {
+            if (!event.active) simulation.alphaTarget(0.3).restart();
+            d.fx = d.x;
+            d.fy = d.y;
+        }
+        function dragged(event, d) {
+            d.fx = event.x;
+            d.fy = event.y;
+        }
+        function dragended(event, d) {
+            if (!event.active) simulation.alphaTarget(0);
+            d.fx = null;
+            d.fy = null;
+        }
+
+        updateStatus(`渲染完成 | 成員：${nodes.length} 人`);
+
+    }).catch(error => {
+        console.error(error);
+        updateStatus("連線失敗！請檢查網路或 CORS 設定", true);
+    });
+
+</script>
+</body>
+</html>
