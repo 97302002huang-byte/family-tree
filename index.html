@@ -2,146 +2,211 @@
 <html lang="zh-TW">
 <head>
     <meta charset="UTF-8">
-    <title>互動式數位家族樹 - 交互增強版</title>
+    <title>互動式數位家族樹 - 自動同步正式版</title>
     <script src="https://d3js.org/d3.v7.min.js"></script>
     <style>
         :root { --male-color: #4A90E2; --female-color: #F5A623; }
-        body { font-family: "Microsoft JhengHei", sans-serif; background-color: #f8f9fa; margin: 0; overflow: hidden; }
-        #canvas { width: 100vw; height: 100vh; }
-        .node circle { stroke: #fff; stroke-width: 3px; cursor: pointer; transition: r 0.2s; }
-        .node circle:hover { r: 40; }
+        body { font-family: "Microsoft JhengHei", sans-serif; background-color: #f0f2f5; margin: 0; overflow: hidden; }
+        #canvas { width: 100vw; height: 100vh; background: radial-gradient(#ffffff 10%, #f0f2f5 90%); }
+        
+        /* 節點與連線 */
+        .node circle { stroke: #fff; stroke-width: 3px; cursor: pointer; transition: all 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275); }
         .node text { font-size: 14px; font-weight: bold; fill: #333; pointer-events: none; }
-        .link { fill: none; stroke: #cbd5e0; stroke-width: 2px; }
-        /* 懸浮標籤 */
+        .link { fill: none; stroke: #cbd5e0; stroke-width: 2px; transition: stroke 0.3s; }
+        
+        /* 懸浮標籤 (Tooltip) */
         .tooltip { 
-            position: absolute; padding: 8px 12px; background: rgba(0,0,0,0.8); 
-            color: white; border-radius: 6px; font-size: 13px; pointer-events: none; 
-            display: none; z-index: 1000; 
+            position: absolute; padding: 10px 15px; background: rgba(33, 37, 41, 0.9); 
+            color: white; border-radius: 8px; font-size: 14px; pointer-events: none; 
+            display: none; z-index: 1000; line-height: 1.6; box-shadow: 0 4px 10px rgba(0,0,0,0.2);
         }
+        
+        /* 側邊欄 (Sidebar) */
         .sidebar { 
-            position: fixed; right: 0; top: 0; width: 300px; height: 100%; 
-            background: white; box-shadow: -5px 0 15px rgba(0,0,0,0.1); 
-            padding: 20px; display: none; z-index: 100;
+            position: fixed; right: 0; top: 0; width: 320px; height: 100%; 
+            background: white; box-shadow: -5px 0 25px rgba(0,0,0,0.1); 
+            padding: 30px 25px; display: none; z-index: 100; overflow-y: auto;
         }
-        .active-anchor { stroke: #2ecc71 !important; stroke-width: 5px !important; }
+        .active-anchor { stroke: #2ecc71 !important; stroke-width: 6px !important; }
+        
+        /* 載入遮罩 */
+        .loading-overlay {
+            position: fixed; top:0; left:0; width:100%; height:100%;
+            background: #fff; display: flex; flex-direction: column; justify-content: center;
+            align-items: center; z-index: 2000; font-size: 18px; color: #555;
+        }
+        .spinner { width: 40px; height: 40px; border: 4px solid #f3f3f3; border-top: 4px solid #3498db; border-radius: 50%; animation: spin 1s linear infinite; margin-bottom: 20px; }
+        @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
     </style>
 </head>
 <body>
+
+<div id="loading" class="loading-overlay">
+    <div class="spinner"></div>
+    正在從 Google Sheets 同步家族資料...
+</div>
 
 <div id="tooltip" class="tooltip"></div>
 <div id="canvas"></div>
 
 <div id="sidebar" class="sidebar">
-    <button onclick="this.parentElement.style.display='none'">✕</button>
-    <div style="text-align:center">
-        <img id="sb-photo" style="width:100px; height:100px; border-radius:50%; object-fit:cover;">
-        <h2 id="sb-name"></h2>
-        <p><strong>目前的視角基準點</strong></p>
+    <button onclick="this.parentElement.style.display='none'" style="float:right; border:none; background:none; font-size:24px; cursor:pointer;">✕</button>
+    <div style="text-align:center; margin-top:10px;">
+        <img id="sb-photo" style="width:130px; height:130px; border-radius:50%; object-fit:cover; border:5px solid #fff; box-shadow: 0 5px 15px rgba(0,0,0,0.1);">
+        <h2 id="sb-name" style="margin: 15px 0 5px;"></h2>
+        <div id="sb-anchor-tag" style="display:inline-block; background:#e8f5e9; color:#2e7d32; padding:4px 12px; border-radius:20px; font-size:13px; font-weight:bold;">基準視角</div>
     </div>
-    <hr>
-    <div id="sb-info"></div>
+    <hr style="margin:25px 0; border:0; border-top:1px solid #eee;">
+    <div style="font-size:15px; color:#444;">
+        <p><strong>英文姓名：</strong><span id="sb-enname"></span></p>
+        <p><strong>出生日期：</strong><span id="sb-birthday"></span></p>
+        <p><strong>性別：</strong><span id="sb-gender"></span></p>
+        <p><strong>個人簡介：</strong><br><span id="sb-bio" style="color:#666; display:block; margin-top:5px; line-height:1.6;"></span></p>
+    </div>
 </div>
 
 <script>
-const familyData = [
-  { "id": "P001", "name": "黃兆宏", "enName": "---", "gender": "M", "birthday": "1956/01/15", "spouse": "P002", "parents": [], "photo": "https://drive.google.com/uc?export=view&id=1LU64R0LCdVxFyfSgRQLmAtZ-OuL6Zzma" },
-  { "id": "P002", "name": "劉水蓮", "enName": "---", "gender": "F", "birthday": "1961/02/02", "spouse": "P001", "parents": [], "photo": "https://drive.google.com/uc?export=view&id=1_CcuhFYkqVL6B-1RHg210ar4vEx60lsU" },
-  { "id": "P003", "name": "黃柏文", "enName": "Bruce", "gender": "M", "birthday": "1990/03/19", "spouse": null, "parents": ["P001", "P002"], "photo": "https://drive.google.com/uc?export=view&id=1VAOnXmYMzxNTnVN7eI9_Wd3o1ASEP-6H" },
-  { "id": "P004", "name": "黃柏凱", "enName": "Frank", "gender": "M", "birthday": "1991/10/03", "spouse": null, "parents": ["P001", "P002"], "photo": "https://drive.google.com/uc?export=view&id=1i3h7jmxRESk7gP1Qv3vI4ttNdaQLzPx8" }
-];
+/**
+ * 您的 Google Sheets CSV 網址
+ */
+const SPREADSHEET_URL = 'https://docs.google.com/spreadsheets/d/e/2PACX-1vSV9UA8RtEJ3d2_Tb9EsIQPeGCf7egp59josXOT4wU3i7fb461XqSqJd4N5ShN89QOt7apY8rStBh4H/pub?output=csv';
 
-let anchorMember = familyData[0]; // 預設基準點
+let familyData = [];
+let anchorMember = null;
+const width = window.innerWidth, height = window.innerHeight;
 
-// 進階稱謂計算
+const svg = d3.select("#canvas").append("svg")
+    .attr("width", width).attr("height", height)
+    .call(d3.zoom().scaleExtent([0.2, 2]).on("zoom", (e) => g.attr("transform", e.transform)))
+    .append("g");
+
+const g = svg.append("g").attr("transform", "translate(150, 150)");
+
+// 1. 初始化與讀取 CSV
+async function init() {
+    try {
+        const response = await fetch(SPREADSHEET_URL);
+        const csvText = await response.text();
+        const rawData = d3.csvParse(csvText);
+        
+        // 清洗與格式化資料
+        familyData = rawData
+            .filter(d => d["ID"]) // 排除 ID 為空的行
+            .map(d => ({
+                id: d["ID"].trim(),
+                name: d["姓名 (中)"],
+                enName: d["姓名 (英)"] || "---",
+                gender: d["性別"] === "M" ? "M" : "F",
+                birthday: d["出生日期"] || "---",
+                spouse: d["配偶ID"] ? d["配偶ID"].trim() : null,
+                parents: [d["父親ID"], d["母親ID"]].filter(p => p && p.trim() !== "").map(p => p.trim()),
+                photo: d["相片路徑"] || "",
+                bio: d["個人簡介"] || "尚無簡介內容。"
+            }));
+
+        anchorMember = familyData[0]; // 預設第一位為基準點
+        document.getElementById("loading").style.display = "none";
+        updateTree();
+    } catch (err) {
+        console.error("資料讀取出錯:", err);
+        document.getElementById("loading").innerText = "資料連線失敗，請檢查網路。";
+    }
+}
+
+// 2. 稱謂演算法
 function getRel(target, source) {
     if (target.id === source.id) return "本人";
     if (source.spouse === target.id) return (target.gender==='M'?'丈夫':'妻子');
     if (target.parents.includes(source.id)) return (target.gender==='M'?'兒子':'女兒');
     if (source.parents.includes(target.id)) return (target.gender==='M'?'父親':'母親');
-    if (target.parents.length > 0 && JSON.stringify(target.parents) === JSON.stringify(source.parents)) {
-        return (target.gender==='M'?'兄弟':'姊妹');
+    
+    // 兄弟姊妹判斷 (共享至少一個父母)
+    if (target.parents.length > 0 && source.parents.length > 0) {
+        const shared = target.parents.filter(p => source.parents.includes(p));
+        if (shared.length > 0) return (target.gender==='M'?'兄弟':'姊妹');
     }
     return "家族成員";
 }
 
-const width = window.innerWidth, height = window.innerHeight;
-const svg = d3.select("#canvas").append("svg")
-    .attr("width", width).attr("height", height)
-    .call(d3.zoom().on("zoom", (e) => g.attr("transform", e.transform)))
-    .append("g");
-
-const g = svg.append("g").attr("transform", "translate(100, 100)");
-
-// 佈局參數優化：增加節點間距
-const treeLayout = d3.tree().nodeSize([120, 250]); // [垂直間距, 水平間距]
+// 3. 繪圖核心
+const treeLayout = d3.tree().nodeSize([150, 350]); // 調大間距解決重疊問題
 
 function updateTree() {
-    g.selectAll("*").remove(); // 清除重繪
+    g.selectAll("*").remove();
 
-    // 處理配偶數據，將其放在主節點的 children 之外但位置靠近
-    const hierarchyData = d3.stratify()
-        .id(d => d.id)
-        .parentId(d => d.id === 'P002' ? null : d.parents[0])(familyData.filter(d => d.id !== 'P002'));
+    // 建立樹狀圖時，排除所有「配偶」作為父節點，避免迴圈
+    const allSpouseIds = familyData.map(m => m.spouse).filter(id => id);
+    const mainBranches = familyData.filter(d => !allSpouseIds.includes(d.id) || d.id === familyData[0].id);
 
-    const root = treeLayout(hierarchyData);
+    try {
+        const hierarchyData = d3.stratify()
+            .id(d => d.id)
+            .parentId(d => d.parents[0])(mainBranches);
 
-    // 畫線
-    g.selectAll(".link").data(root.links()).join("path").attr("class", "link")
-        .attr("d", d3.linkHorizontal().x(d => d.y).y(d => d.x));
+        const root = treeLayout(hierarchyData);
 
-    // 畫成員
-    const nodes = g.selectAll(".node").data(root.descendants()).join("g")
-        .attr("transform", d => `translate(${d.y},${d.x})`);
+        // 畫線
+        g.selectAll(".link").data(root.links()).join("path").attr("class", "link")
+            .attr("d", d3.linkHorizontal().x(d => d.y).y(d => d.x));
 
-    renderMember(nodes);
+        // 畫節點
+        const nodes = g.selectAll(".node").data(root.descendants()).join("g")
+            .attr("transform", d => `translate(${d.y},${d.x})`);
 
-    // 特別處理配偶 P002 (緊貼 P001)
-    const p001 = root.find(n => n.id === 'P001');
-    if (p001) {
-        const spouseG = g.append("g").attr("transform", `translate(${p001.y},${p001.x + 100})`);
-        renderMember(spouseG, familyData.find(m => m.id === 'P002'));
-        // 畫配偶心連心線
-        g.append("line").attr("x1", p001.y).attr("y1", p001.x + 35).attr("x2", p001.y).attr("y2", p001.x + 65)
-         .attr("stroke", "#ffb6c1").attr("stroke-width", 3).attr("stroke-dasharray", "4");
+        nodes.each(function(d) {
+            renderMember(d3.select(this), d.data);
+            
+            // 配偶處理邏輯：如果該節點有配偶，則在右下方繪製
+            if (d.data.spouse) {
+                const spouseObj = familyData.find(m => m.id === d.data.spouse);
+                if (spouseObj) {
+                    const spouseG = g.append("g").attr("transform", `translate(${d.y},${d.x + 120})`);
+                    renderMember(spouseG, spouseObj);
+                    // 連結配偶的虛線
+                    g.append("line")
+                     .attr("x1", d.y).attr("y1", d.x + 35).attr("x2", d.y).attr("y2", d.x + 85)
+                     .attr("stroke", "#ffb6c1").attr("stroke-width", 2).attr("stroke-dasharray", "5,5");
+                }
+            }
+        });
+    } catch(e) {
+        console.warn("佈局警告 (請檢查資料 ID 與 ParentID 是否匹配):", e);
     }
 }
 
-function renderMember(selection, singleData = null) {
-    const enter = singleData ? selection : selection;
+function renderMember(el, member) {
+    const color = member.gender === 'M' ? 'var(--male-color)' : 'var(--female-color)';
     
-    const draw = (el, d) => {
-        const member = d.data || d;
-        const circle = el.append("circle").attr("r", 35)
-            .attr("fill", member.gender === 'M' ? '#4A90E2' : '#F5A623')
-            .classed("active-anchor", member.id === anchorMember.id)
-            .on("click", (e) => {
-                anchorMember = member;
-                showSidebar(member);
-                updateTree();
-            })
-            .on("mouseover", (e) => {
-                const rel = getRel(member, anchorMember);
-                d3.select("#tooltip").style("display", "block")
-                    .html(`稱呼：<strong>${rel}</strong>`)
-                    .style("left", (e.pageX + 15) + "px")
-                    .style("top", (e.pageY - 10) + "px");
-            })
-            .on("mouseout", () => d3.select("#tooltip").style("display", "none"));
+    el.append("circle").attr("r", 35)
+        .attr("fill", color)
+        .classed("active-anchor", member.id === anchorMember.id)
+        .on("click", (e) => {
+            anchorMember = member;
+            showSidebar(member);
+            updateTree();
+        })
+        .on("mouseover", (e) => {
+            const rel = getRel(member, anchorMember);
+            d3.select("#tooltip").style("display", "block")
+                .html(`<strong>${member.name}</strong><br>對應關係：${rel}`)
+                .style("left", (e.pageX + 15) + "px").style("top", (e.pageY - 10) + "px");
+        })
+        .on("mouseout", () => d3.select("#tooltip").style("display", "none"));
 
-        el.append("text").attr("dy", "55px").attr("text-anchor", "middle").text(member.name);
-    };
-
-    if (singleData) draw(selection, singleData);
-    else selection.each(function(d) { draw(d3.select(this), d); });
+    el.append("text").attr("dy", "55px").attr("text-anchor", "middle").text(member.name);
 }
 
 function showSidebar(m) {
-    d3.select("#sb-photo").attr("src", m.photo);
+    d3.select("#sb-photo").attr("src", m.photo || "https://via.placeholder.com/150");
     d3.select("#sb-name").text(m.name);
+    d3.select("#sb-enname").text(m.enName);
+    d3.select("#sb-birthday").text(m.birthday);
+    d3.select("#sb-gender").text(m.gender === 'M' ? '男' : '女');
+    d3.select("#sb-bio").text(m.bio);
     d3.select("#sidebar").style("display", "block");
 }
 
-updateTree();
+init();
 window.onresize = () => location.reload();
 </script>
 </body>
