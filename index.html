@@ -2,212 +2,147 @@
 <html lang="zh-TW">
 <head>
     <meta charset="UTF-8">
-    <title>互動式數位家族樹 - 自動同步正式版</title>
+    <title>互動式數位家族樹 - 萬人容錯版</title>
     <script src="https://d3js.org/d3.v7.min.js"></script>
     <style>
         :root { --male-color: #4A90E2; --female-color: #F5A623; }
         body { font-family: "Microsoft JhengHei", sans-serif; background-color: #f0f2f5; margin: 0; overflow: hidden; }
-        #canvas { width: 100vw; height: 100vh; background: radial-gradient(#ffffff 10%, #f0f2f5 90%); }
-        
-        /* 節點與連線 */
-        .node circle { stroke: #fff; stroke-width: 3px; cursor: pointer; transition: all 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275); }
+        #canvas { width: 100vw; height: 100vh; background: #f8f9fa; }
+        .node circle { stroke: #fff; stroke-width: 3px; cursor: pointer; transition: 0.3s; }
         .node text { font-size: 14px; font-weight: bold; fill: #333; pointer-events: none; }
-        .link { fill: none; stroke: #cbd5e0; stroke-width: 2px; transition: stroke 0.3s; }
-        
-        /* 懸浮標籤 (Tooltip) */
+        .link { fill: none; stroke: #cbd5e0; stroke-width: 2px; }
         .tooltip { 
-            position: absolute; padding: 10px 15px; background: rgba(33, 37, 41, 0.9); 
-            color: white; border-radius: 8px; font-size: 14px; pointer-events: none; 
-            display: none; z-index: 1000; line-height: 1.6; box-shadow: 0 4px 10px rgba(0,0,0,0.2);
+            position: absolute; padding: 10px; background: rgba(0,0,0,0.8); 
+            color: white; border-radius: 6px; font-size: 13px; display: none; z-index: 1000; 
         }
-        
-        /* 側邊欄 (Sidebar) */
-        .sidebar { 
-            position: fixed; right: 0; top: 0; width: 320px; height: 100%; 
-            background: white; box-shadow: -5px 0 25px rgba(0,0,0,0.1); 
-            padding: 30px 25px; display: none; z-index: 100; overflow-y: auto;
-        }
+        .sidebar { position: fixed; right: 0; top: 0; width: 300px; height: 100%; background: white; box-shadow: -5px 0 15px rgba(0,0,0,0.1); padding: 20px; display: none; z-index: 100; overflow-y: auto; }
         .active-anchor { stroke: #2ecc71 !important; stroke-width: 6px !important; }
-        
-        /* 載入遮罩 */
-        .loading-overlay {
-            position: fixed; top:0; left:0; width:100%; height:100%;
-            background: #fff; display: flex; flex-direction: column; justify-content: center;
-            align-items: center; z-index: 2000; font-size: 18px; color: #555;
-        }
-        .spinner { width: 40px; height: 40px; border: 4px solid #f3f3f3; border-top: 4px solid #3498db; border-radius: 50%; animation: spin 1s linear infinite; margin-bottom: 20px; }
-        @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
     </style>
 </head>
 <body>
 
-<div id="loading" class="loading-overlay">
-    <div class="spinner"></div>
-    正在從 Google Sheets 同步家族資料...
-</div>
-
+<div id="loading" style="position:fixed; top:50%; left:50%; transform:translate(-50%,-50%);">資料同步中...</div>
 <div id="tooltip" class="tooltip"></div>
 <div id="canvas"></div>
 
 <div id="sidebar" class="sidebar">
-    <button onclick="this.parentElement.style.display='none'" style="float:right; border:none; background:none; font-size:24px; cursor:pointer;">✕</button>
-    <div style="text-align:center; margin-top:10px;">
-        <img id="sb-photo" style="width:130px; height:130px; border-radius:50%; object-fit:cover; border:5px solid #fff; box-shadow: 0 5px 15px rgba(0,0,0,0.1);">
-        <h2 id="sb-name" style="margin: 15px 0 5px;"></h2>
-        <div id="sb-anchor-tag" style="display:inline-block; background:#e8f5e9; color:#2e7d32; padding:4px 12px; border-radius:20px; font-size:13px; font-weight:bold;">基準視角</div>
+    <button onclick="this.parentElement.style.display='none'">✕ Close</button>
+    <div style="text-align:center; margin-top:20px;">
+        <img id="sb-photo" style="width:120px; height:120px; border-radius:50%; object-fit:cover;">
+        <h2 id="sb-name"></h2>
     </div>
-    <hr style="margin:25px 0; border:0; border-top:1px solid #eee;">
-    <div style="font-size:15px; color:#444;">
-        <p><strong>英文姓名：</strong><span id="sb-enname"></span></p>
-        <p><strong>出生日期：</strong><span id="sb-birthday"></span></p>
-        <p><strong>性別：</strong><span id="sb-gender"></span></p>
-        <p><strong>個人簡介：</strong><br><span id="sb-bio" style="color:#666; display:block; margin-top:5px; line-height:1.6;"></span></p>
-    </div>
+    <hr>
+    <div id="sb-details"></div>
 </div>
 
 <script>
-/**
- * 您的 Google Sheets CSV 網址
- */
 const SPREADSHEET_URL = 'https://docs.google.com/spreadsheets/d/e/2PACX-1vSV9UA8RtEJ3d2_Tb9EsIQPeGCf7egp59josXOT4wU3i7fb461XqSqJd4N5ShN89QOt7apY8rStBh4H/pub?output=csv';
 
 let familyData = [];
 let anchorMember = null;
-const width = window.innerWidth, height = window.innerHeight;
+const svg = d3.select("#canvas").append("svg").attr("width", window.innerWidth).attr("height", window.innerHeight);
+const g = svg.append("g").attr("transform", "translate(100, 100)");
+svg.call(d3.zoom().on("zoom", (e) => g.attr("transform", e.transform)));
 
-const svg = d3.select("#canvas").append("svg")
-    .attr("width", width).attr("height", height)
-    .call(d3.zoom().scaleExtent([0.2, 2]).on("zoom", (e) => g.attr("transform", e.transform)))
-    .append("g");
-
-const g = svg.append("g").attr("transform", "translate(150, 150)");
-
-// 1. 初始化與讀取 CSV
 async function init() {
-    try {
-        const response = await fetch(SPREADSHEET_URL);
-        const csvText = await response.text();
-        const rawData = d3.csvParse(csvText);
-        
-        // 清洗與格式化資料
-        familyData = rawData
-            .filter(d => d["ID"]) // 排除 ID 為空的行
-            .map(d => ({
-                id: d["ID"].trim(),
-                name: d["姓名 (中)"],
-                enName: d["姓名 (英)"] || "---",
-                gender: d["性別"] === "M" ? "M" : "F",
-                birthday: d["出生日期"] || "---",
-                spouse: d["配偶ID"] ? d["配偶ID"].trim() : null,
-                parents: [d["父親ID"], d["母親ID"]].filter(p => p && p.trim() !== "").map(p => p.trim()),
-                photo: d["相片路徑"] || "",
-                bio: d["個人簡介"] || "尚無簡介內容。"
-            }));
-
-        anchorMember = familyData[0]; // 預設第一位為基準點
-        document.getElementById("loading").style.display = "none";
-        updateTree();
-    } catch (err) {
-        console.error("資料讀取出錯:", err);
-        document.getElementById("loading").innerText = "資料連線失敗，請檢查網路。";
-    }
-}
-
-// 2. 稱謂演算法
-function getRel(target, source) {
-    if (target.id === source.id) return "本人";
-    if (source.spouse === target.id) return (target.gender==='M'?'丈夫':'妻子');
-    if (target.parents.includes(source.id)) return (target.gender==='M'?'兒子':'女兒');
-    if (source.parents.includes(target.id)) return (target.gender==='M'?'父親':'母親');
+    const response = await fetch(SPREADSHEET_URL + '&cache=' + new Date().getTime()); // 加時間戳避免快取
+    const csvText = await response.text();
+    const raw = d3.csvParse(csvText);
     
-    // 兄弟姊妹判斷 (共享至少一個父母)
-    if (target.parents.length > 0 && source.parents.length > 0) {
-        const shared = target.parents.filter(p => source.parents.includes(p));
-        if (shared.length > 0) return (target.gender==='M'?'兄弟':'姊妹');
-    }
-    return "家族成員";
-}
+    familyData = raw.filter(d => d.ID).map(d => ({
+        id: d.ID.trim(),
+        name: d["姓名 (中)"],
+        gender: d["性別"],
+        parents: [d["父親ID"], d["母親ID"]].filter(p => p && p.trim() !== ""),
+        spouse: d["配偶ID"] ? d["配偶ID"].trim() : null,
+        photo: d["相片路徑"],
+        birthday: d["出生日期"],
+        bio: d["個人簡介"]
+    }));
 
-// 3. 繪圖核心
-const treeLayout = d3.tree().nodeSize([150, 350]); // 調大間距解決重疊問題
+    anchorMember = familyData[0];
+    document.getElementById("loading").style.display = "none";
+    updateTree();
+}
 
 function updateTree() {
     g.selectAll("*").remove();
 
-    // 建立樹狀圖時，排除所有「配偶」作為父節點，避免迴圈
-    const allSpouseIds = familyData.map(m => m.spouse).filter(id => id);
-    const mainBranches = familyData.filter(d => !allSpouseIds.includes(d.id) || d.id === familyData[0].id);
+    // 核心邏輯修正：手動計算佈局而非強迫使用 d3.stratify
+    // 為了處理 100 人且可能斷層的資料，我們改用分層渲染
+    const idMap = new Map(familyData.map(d => [d.id, d]));
+    const spouseIds = new Set(familyData.map(d => d.spouse).filter(id => id));
 
-    try {
-        const hierarchyData = d3.stratify()
-            .id(d => d.id)
-            .parentId(d => d.parents[0])(mainBranches);
+    // 過濾出主要節點（非配偶）
+    const mainNodes = familyData.filter(d => !spouseIds.has(d.id) || d.id === familyData[0].id);
+    
+    // 建立虛擬分層：根據沒有父母的人作為起始點
+    const roots = mainNodes.filter(d => d.parents.length === 0);
+    
+    let currentY = 0;
+    roots.forEach((rootMem, index) => {
+        const treeData = buildHierarchy(rootMem, mainNodes);
+        if(!treeData) return;
+        
+        const root = d3.hierarchy(treeData);
+        const treeLayout = d3.tree().nodeSize([120, 300]);
+        treeLayout(root);
 
-        const root = treeLayout(hierarchyData);
-
+        const treeGroup = g.append("g").attr("transform", `translate(0, ${currentY})`);
+        
         // 畫線
-        g.selectAll(".link").data(root.links()).join("path").attr("class", "link")
+        treeGroup.selectAll(".link").data(root.links()).join("path").attr("class", "link")
             .attr("d", d3.linkHorizontal().x(d => d.y).y(d => d.x));
 
-        // 畫節點
-        const nodes = g.selectAll(".node").data(root.descendants()).join("g")
+        // 畫人
+        const nodes = treeGroup.selectAll(".node").data(root.descendants()).join("g")
             .attr("transform", d => `translate(${d.y},${d.x})`);
 
         nodes.each(function(d) {
-            renderMember(d3.select(this), d.data);
-            
-            // 配偶處理邏輯：如果該節點有配偶，則在右下方繪製
-            if (d.data.spouse) {
-                const spouseObj = familyData.find(m => m.id === d.data.spouse);
-                if (spouseObj) {
-                    const spouseG = g.append("g").attr("transform", `translate(${d.y},${d.x + 120})`);
-                    renderMember(spouseG, spouseObj);
-                    // 連結配偶的虛線
-                    g.append("line")
-                     .attr("x1", d.y).attr("y1", d.x + 35).attr("x2", d.y).attr("y2", d.x + 85)
-                     .attr("stroke", "#ffb6c1").attr("stroke-width", 2).attr("stroke-dasharray", "5,5");
+            drawMember(d3.select(this), d.data);
+            if(d.data.spouse) {
+                const sp = idMap.get(d.data.spouse);
+                if(sp) {
+                    const spG = d3.select(this.parentNode).append("g")
+                        .attr("transform", `translate(${d.y}, ${d.x + 100})`);
+                    drawMember(spG, sp);
                 }
             }
         });
-    } catch(e) {
-        console.warn("佈局警告 (請檢查資料 ID 與 ParentID 是否匹配):", e);
-    }
+        currentY += 500; // 每個家族分支垂直隔開，避免重疊
+    });
 }
 
-function renderMember(el, member) {
-    const color = member.gender === 'M' ? 'var(--male-color)' : 'var(--female-color)';
-    
-    el.append("circle").attr("r", 35)
-        .attr("fill", color)
-        .classed("active-anchor", member.id === anchorMember.id)
-        .on("click", (e) => {
-            anchorMember = member;
-            showSidebar(member);
-            updateTree();
-        })
-        .on("mouseover", (e) => {
-            const rel = getRel(member, anchorMember);
-            d3.select("#tooltip").style("display", "block")
-                .html(`<strong>${member.name}</strong><br>對應關係：${rel}`)
-                .style("left", (e.pageX + 15) + "px").style("top", (e.pageY - 10) + "px");
-        })
-        .on("mouseout", () => d3.select("#tooltip").style("display", "none"));
+function buildHierarchy(member, all) {
+    const children = all.filter(d => d.parents.includes(member.id));
+    return {
+        ...member,
+        children: children.map(c => buildHierarchy(c, all))
+    };
+}
 
-    el.append("text").attr("dy", "55px").attr("text-anchor", "middle").text(member.name);
+function drawMember(el, m) {
+    el.append("circle").attr("r", 35)
+        .attr("fill", m.gender === 'M' ? 'var(--male-color)' : 'var(--female-color)')
+        .classed("active-anchor", m.id === anchorMember.id)
+        .on("click", () => { anchorMember = m; updateTree(); showSidebar(m); });
+    
+    el.append("text").attr("dy", "55px").attr("text-anchor", "middle").text(m.name);
+    
+    el.on("mouseover", (e) => {
+        d3.select("#tooltip").style("display", "block").text(m.name)
+            .style("left", (e.pageX+10)+"px").style("top", (e.pageY-10)+"px");
+    }).on("mouseout", () => d3.select("#tooltip").style("display", "none"));
 }
 
 function showSidebar(m) {
-    d3.select("#sb-photo").attr("src", m.photo || "https://via.placeholder.com/150");
+    d3.select("#sb-photo").attr("src", m.photo);
     d3.select("#sb-name").text(m.name);
-    d3.select("#sb-enname").text(m.enName);
-    d3.select("#sb-birthday").text(m.birthday);
-    d3.select("#sb-gender").text(m.gender === 'M' ? '男' : '女');
-    d3.select("#sb-bio").text(m.bio);
+    d3.select("#sb-details").html(`<p>生日: ${m.birthday}</p><p>簡介: ${m.bio}</p>`);
     d3.select("#sidebar").style("display", "block");
 }
 
 init();
-window.onresize = () => location.reload();
 </script>
 </body>
 </html>
