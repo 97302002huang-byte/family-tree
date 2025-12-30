@@ -2,152 +2,187 @@
 <html lang="zh-TW">
 <head>
     <meta charset="UTF-8">
-    <title>家族關係網 - 物理引擎版</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>家族數位族譜 - 重力分層版</title>
     <script src="https://d3js.org/d3.v7.min.js"></script>
     <style>
-        body { margin: 0; overflow: hidden; background: #222; font-family: "Microsoft JhengHei"; }
-        #canvas { width: 100vw; height: 100vh; }
-        .node circle { stroke: #fff; stroke-width: 2px; cursor: grab; }
-        .node text { font-size: 12px; fill: #eee; pointer-events: none; text-shadow: 1px 1px 2px #000; }
-        .link { stroke: #999; stroke-opacity: 0.6; stroke-width: 2px; }
-        #status { position: fixed; top: 10px; left: 10px; color: #0f0; background: rgba(0,0,0,0.7); padding: 10px; }
+        /* --- 樣式設定區 (CSS) --- */
+        body { 
+            margin: 0; 
+            overflow: hidden; 
+            background: #1a1a1a; /* 深色背景保護眼睛 */
+            font-family: "Microsoft JhengHei", sans-serif; 
+        }
+        
+        #canvas { 
+            width: 100vw; 
+            height: 100vh; 
+            cursor: move; /* 提示可以拖拉畫布 */
+        }
+
+        /* 節點樣式 */
+        .node circle { 
+            stroke: #fff; 
+            stroke-width: 2px; 
+            transition: all 0.3s ease;
+            cursor: grab;
+        }
+        .node:hover circle { 
+            stroke: #ffd700; /* 滑鼠懸停變成金框 */
+            stroke-width: 4px; 
+            r: 25px; /* 稍微放大 */
+        }
+        .node:active circle {
+            cursor: grabbing;
+        }
+
+        /* 文字標籤 */
+        .node text { 
+            font-size: 13px; 
+            fill: #eee; 
+            pointer-events: none; /* 讓滑鼠點擊穿透文字直接點到圓圈 */
+            text-shadow: 2px 2px 4px #000; /* 黑色陰影讓文字更清晰 */
+            font-weight: bold;
+        }
+
+        /* 連線樣式 */
+        .link { 
+            stroke-opacity: 0.6; 
+            stroke-width: 1.5px; 
+        }
+
+        /* 狀態列 */
+        #status-bar { 
+            position: fixed; 
+            top: 10px; 
+            left: 10px; 
+            color: #00ff9d; 
+            background: rgba(0, 0, 0, 0.8); 
+            padding: 10px 15px; 
+            border-radius: 8px; 
+            border: 1px solid #333;
+            font-size: 14px;
+            z-index: 100;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.3);
+        }
     </style>
 </head>
 <body>
 
-<div id="status">系統準備中...</div>
-<div id="canvas"></div>
+    <div id="status-bar">正在連線至家族資料庫...</div>
+    
+    <div id="canvas"></div>
 
 <script>
-const SPREADSHEET_URL = 'https://docs.google.com/spreadsheets/d/e/2PACX-1vSV9UA8RtEJ3d2_Tb9EsIQPeGCf7egp59josXOT4wU3i7fb461XqSqJd4N5ShN89QOt7apY8rStBh4H/pub?output=csv';
+    // ==========================================
+    // 1. 系統參數設定
+    // ==========================================
+    const width = window.innerWidth;
+    const height = window.innerHeight;
+    
+    // 視覺參數
+    const COLOR_MALE = '#4A90E2';   // 男性藍色
+    const COLOR_FEMALE = '#F5A623'; // 女性橘色
+    const LEVEL_HEIGHT = 150;       // 每一代的垂直間距 (px)
+    
+    // 資料來源 (Google Sheets CSV)
+    const SPREADSHEET_URL = 'https://docs.google.com/spreadsheets/d/e/2PACX-1vSV9UA8RtEJ3d2_Tb9EsIQi_BW_O4gE3TJqU0uE-c_7dFuwETvY6MTAg86K3Z43G3Oq9wJ2T-Wc58WJ/pub?output=csv';
 
-const width = window.innerWidth;
-const height = window.innerHeight;
-
-const svg = d3.select("#canvas").append("svg")
-    .attr("width", width)
-    .attr("height", height)
-    .call(d3.zoom().on("zoom", (e) => g.attr("transform", e.transform)))
-    .append("g");
-
-const g = svg.append("g");
-
-const simulation = d3.forceSimulation()
-    .force("link", d3.forceLink().id(d => d.id).distance(150))
-    .force("charge", d3.forceManyBody().strength(-500)) // 排斥力
-    .force("center", d3.forceCenter(width / 2, height / 2))
-    .force("collide", d3.forceCollide(50)); // 避免重疊
-
-async function init() {
-    try {
-        document.getElementById("status").innerText = "正在下載 Google Sheets...";
-        const resp = await fetch(SPREADSHEET_URL + '&t=' + Date.now());
-        const csv = await resp.text();
-        const rawData = d3.csvParse(csv);
-
-        document.getElementById("status").innerText = `下載成功，共 ${rawData.length} 人。正在建立物理模型...`;
-
-        // 1. 整理節點 (Nodes)
-        const nodes = rawData.filter(d => d.ID).map(d => ({
-            id: d.ID.trim(),
-            name: d["姓名 (中)"],
-            gender: d["性別"]
+    // ==========================================
+    // 2. 初始化畫布 (Canvas)
+    // ==========================================
+    const svg = d3.select("#canvas").append("svg")
+        .attr("width", width)
+        .attr("height", height)
+        .call(d3.zoom().on("zoom", (event) => {
+            container.attr("transform", event.transform);
         }));
 
-        // 2. 整理連線 (Links) - 只要有關係就連，不管輩分
-        const links = [];
-        const idSet = new Set(nodes.map(n => n.id));
+    const container = svg.append("g");
 
-        rawData.forEach(d => {
-            const source = d.ID.trim();
-            // 處理父母連線
-            [d["父親ID"], d["母親ID"]].forEach(target => {
-                if (target && idSet.has(target.trim())) {
-                    links.push({ source: source, target: target.trim(), type: "parent" });
-                }
-            });
-            // 處理配偶連線
-            if (d["配偶ID"] && idSet.has(d["配偶ID"].trim())) {
-                // 為了避免重複畫線，我們只畫 "ID 小連到 ID 大" 的
-                if (source < d["配偶ID"].trim()) {
-                    links.push({ source: source, target: d["配偶ID"].trim(), type: "spouse" });
+    // ==========================================
+    // 3. 核心邏輯 (Main Logic)
+    // ==========================================
+    d3.csv(SPREADSHEET_URL).then(raw_data => {
+        updateStatus(`讀取成功，共 ${raw_data.length} 筆資料，正在計算輩分...`);
+
+        // --- A. 資料清洗 ---
+        const nodes = raw_data.map(d => ({
+            id: d['ID'],
+            name: d['姓名 (中)'] || d['姓名 (英)'] || '未知',
+            gender: d['性別'] ? d['性別'].toUpperCase() : 'M',
+            fatherId: d['父親ID'],
+            motherId: d['母親ID'],
+            spouseId: d['配偶ID'],
+            img: d['相片路徑'],
+            level: null // 這是我們接下來要計算的
+        })).filter(d => d.id); // 濾掉沒有 ID 的空行
+
+        // 建立快速查找表 (Map)
+        const nodeMap = new Map(nodes.map(n => [n.id, n]));
+
+        // --- B. 演算法：遞迴計算輩分 (Generational Gravity) ---
+        function calculateLevel(nodeId, visited = new Set()) {
+            if (!nodeId || !nodeMap.has(nodeId)) return 0; // 找不到人，當作第一代
+            if (visited.has(nodeId)) return 0; // 防止無窮迴圈
+            
+            const node = nodeMap.get(nodeId);
+            if (node.level !== null) return node.level; // 已經算過，直接回傳
+
+            visited.add(nodeId);
+
+            // 遞迴往上找父母
+            let fatherLevel = -1;
+            let motherLevel = -1;
+
+            if (node.fatherId) fatherLevel = calculateLevel(node.fatherId, new Set(visited));
+            if (node.motherId) motherLevel = calculateLevel(node.motherId, new Set(visited));
+
+            // 自己的輩分 = 父母中較大的輩分 + 1
+            // 如果沒父母，預設 Math.max 回傳 -1，加 1 後變成 0 (第一代)
+            const myLevel = Math.max(fatherLevel, motherLevel) + 1;
+            
+            node.level = myLevel;
+            return myLevel;
+        }
+
+        // 第一輪：計算有血緣者的輩分
+        nodes.forEach(node => calculateLevel(node.id));
+
+        // 第二輪：配偶校正 (Spouse Alignment)
+        // 解決「嫁進來/入贅」的人如果沒有父母資料，會變成第0代的錯誤
+        nodes.forEach(node => {
+            if (node.level === 0 && node.spouseId && nodeMap.has(node.spouseId)) {
+                const spouse = nodeMap.get(node.spouseId);
+                // 如果配偶有算出來的輩分，就跟隨配偶
+                if (spouse.level && spouse.level > 0) {
+                    node.level = spouse.level;
                 }
             }
         });
 
-        render(nodes, links);
-        document.getElementById("status").innerText = `渲染完成！節點: ${nodes.length}, 連線: ${links.length}`;
-
-    } catch (e) {
-        document.getElementById("status").innerText = "錯誤: " + e;
-        document.getElementById("status").style.color = "red";
-    }
-}
-
-function render(nodes, links) {
-    // 繪製連線
-    const link = g.append("g")
-        .selectAll("line")
-        .data(links)
-        .join("line")
-        .attr("class", "link")
-        .attr("stroke", d => d.type === 'spouse' ? '#ff69b4' : '#999') // 配偶粉紅線，父母灰線
-        .attr("stroke-dasharray", d => d.type === 'spouse' ? '5,5' : '0');
-
-    // 繪製節點
-    const node = g.append("g")
-        .selectAll(".node")
-        .data(nodes)
-        .join("g")
-        .attr("class", "node")
-        .call(d3.drag()
-            .on("start", dragstarted)
-            .on("drag", dragged)
-            .on("end", dragended));
-
-    node.append("circle")
-        .attr("r", 20)
-        .attr("fill", d => d.gender === 'M' ? '#4A90E2' : '#F5A623');
-
-    node.append("text")
-        .attr("dy", -30)
-        .attr("text-anchor", "middle")
-        .text(d => d.name);
-
-    // 啟動物理模擬
-    simulation
-        .nodes(nodes)
-        .on("tick", () => {
-            link
-                .attr("x1", d => d.source.x)
-                .attr("y1", d => d.source.y)
-                .attr("x2", d => d.target.x)
-                .attr("y2", d => d.target.y);
-
-            node
-                .attr("transform", d => `translate(${d.x},${d.y})`);
+        // --- C. 建立連結 (Links) ---
+        const links = [];
+        nodes.forEach(node => {
+            // 父子連線
+            if (node.fatherId && nodeMap.has(node.fatherId)) {
+                links.push({ source: node.fatherId, target: node.id, type: 'parent' });
+            }
+            // 母子連線
+            if (node.motherId && nodeMap.has(node.motherId)) {
+                links.push({ source: node.motherId, target: node.id, type: 'parent' });
+            }
+            // 配偶連線 (為避免重複，只由 ID 小的連向 ID 大的)
+            if (node.spouseId && nodeMap.has(node.spouseId)) {
+                if (node.id < node.spouseId) {
+                    links.push({ source: node.id, target: node.spouseId, type: 'spouse' });
+                }
+            }
         });
 
-    simulation.force("link").links(links);
-}
-
-// 拖曳互動函數
-function dragstarted(event, d) {
-    if (!event.active) simulation.alphaTarget(0.3).restart();
-    d.fx = d.x;
-    d.fy = d.y;
-}
-function dragged(event, d) {
-    d.fx = event.x;
-    d.fy = event.y;
-}
-function dragended(event, d) {
-    if (!event.active) simulation.alphaTarget(0);
-    d.fx = null;
-    d.fy = null;
-}
-
-init();
-</script>
-</body>
-</html>
+        // --- D. 物理模擬引擎設定 (Physics Engine) ---
+        const simulation = d3.forceSimulation(nodes)
+            // 1. 連結力：配偶靠近一點(50)，親子遠一點(100)
+            .force("link", d3.forceLink(links).id(d => d.id).distance(d => d.type === 'spouse' ? 50 : 100))
+            // 2. 排斥力：避免大家擠在一起
+            .force("charge", d3.forceManyBody().strength(-500))
