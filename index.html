@@ -3,187 +3,189 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>家族數位族譜 - 穩定連線版</title>
+    <title>家族數位族譜 - 系統診斷版</title>
     <script src="https://d3js.org/d3.v7.min.js"></script>
     <style>
-        body { margin: 0; overflow: hidden; background: #1a1a1a; font-family: "Microsoft JhengHei", sans-serif; }
-        #canvas { width: 100vw; height: 100vh; cursor: move; }
-        .node circle { stroke: #fff; stroke-width: 2px; transition: all 0.3s ease; cursor: grab; }
-        .node:hover circle { stroke: #ffd700; stroke-width: 4px; r: 25px; }
-        .node:active circle { cursor: grabbing; }
-        .node text { font-size: 13px; fill: #eee; pointer-events: none; text-shadow: 2px 2px 4px #000; font-weight: bold; }
-        .link { stroke-opacity: 0.6; stroke-width: 1.5px; }
+        body { margin: 0; overflow: hidden; background: #111; font-family: "Consolas", "Microsoft JhengHei", monospace; }
         
-        /* 進度條樣式 */
-        #status-bar { 
-            position: fixed; top: 10px; left: 10px; color: #00ff9d; background: rgba(0, 0, 0, 0.85); 
-            padding: 12px 20px; border-radius: 8px; border: 1px solid #333; font-size: 14px; z-index: 100;
-            box-shadow: 0 4px 10px rgba(0,0,0,0.5); font-family: monospace;
+        /* 診斷面板樣式 */
+        #debug-panel { 
+            position: fixed; top: 0; left: 0; width: 100%; max-height: 40vh; 
+            overflow-y: auto; background: rgba(0,0,0,0.9); color: #0f0; 
+            padding: 10px; border-bottom: 2px solid #333; z-index: 999;
+            font-size: 13px; line-height: 1.5; pointer-events: none;
         }
+        .log-info { color: #00ff9d; }
+        .log-warn { color: #ffeb3b; }
+        .log-error { color: #ff4444; font-weight: bold; background: rgba(50,0,0,0.5); display: block; padding: 2px; }
+        
+        /* 畫布 */
+        #canvas { width: 100vw; height: 100vh; cursor: move; }
+        
+        .node circle { stroke: #fff; stroke-width: 2px; }
+        .node text { font-size: 12px; fill: #eee; pointer-events: none; text-shadow: 1px 1px 2px #000; }
+        .link { stroke-opacity: 0.6; stroke-width: 1.5px; }
     </style>
 </head>
 <body>
 
-    <div id="status-bar">準備連線至 Google Sheets...</div>
+    <div id="debug-panel">系統啟動中...<br></div>
+    
     <div id="canvas"></div>
 
 <script>
     // ==========================================
-    // 1. 設定區
+    // 0. 全局錯誤攔截 (讓錯誤顯示在螢幕上)
+    // ==========================================
+    const debugPanel = document.getElementById("debug-panel");
+    
+    function log(msg, type="info") {
+        const span = document.createElement("span");
+        span.className = `log-${type}`;
+        span.innerText = `> ${msg}\n`;
+        debugPanel.appendChild(span);
+        debugPanel.scrollTop = debugPanel.scrollHeight; // 自動捲動到底部
+        console.log(msg);
+    }
+
+    window.onerror = function(message, source, lineno, colno, error) {
+        log(`CRITICAL ERROR: ${message} (Line: ${lineno})`, "error");
+        log("請截圖此畫面回報。", "error");
+    };
+
+    // ==========================================
+    // 1. 設定與連線
     // ==========================================
     const width = window.innerWidth;
     const height = window.innerHeight;
-    const COLOR_MALE = '#4A90E2';
-    const COLOR_FEMALE = '#F5A623';
-    const LEVEL_HEIGHT = 150; // 每一代的垂直距離
-
-    // 您的 Google Sheet CSV 連結 (確保沒動過)
     const SPREADSHEET_URL = 'https://docs.google.com/spreadsheets/d/e/2PACX-1vSV9UA8RtEJ3d2_Tb9EsIQi_BW_O4gE3TJqU0uE-c_7dFuwETvY6MTAg86K3Z43G3Oq9wJ2T-Wc58WJ/pub?output=csv';
 
-    // 狀態更新函式
-    function updateStatus(msg, isError = false) {
-        const el = document.getElementById("status-bar");
-        el.innerText = `> ${msg}`;
-        if (isError) el.style.color = "#ff4444";
-        console.log(`[System] ${msg}`);
-    }
-
-    // ==========================================
-    // 2. 初始化畫布
-    // ==========================================
+    // 初始化畫布
     const svg = d3.select("#canvas").append("svg")
         .attr("width", width)
         .attr("height", height)
         .call(d3.zoom().scaleExtent([0.1, 4]).on("zoom", (event) => {
             container.attr("transform", event.transform);
         }));
-
     const container = svg.append("g");
 
     // ==========================================
-    // 3. 主程式邏輯
+    // 2. 資料處理邏輯
     // ==========================================
-    updateStatus("正在下載 CSV 資料...");
+    log("正在嘗試下載 Google Sheets CSV...");
 
-    d3.csv(SPREADSHEET_URL).then(raw_data => {
+    d3.text(SPREADSHEET_URL).then(textData => {
+        log(`下載成功 (長度: ${textData.length} chars)`);
         
-        updateStatus(`下載成功！共 ${raw_data.length} 筆資料。正在清洗...`);
+        // 解析 CSV
+        const raw_data = d3.csvParse(textData);
+        log(`解析成功，共 ${raw_data.length} 筆資料`);
 
-        // --- A. 資料清洗與防呆 ---
-        const nodes = raw_data.map(d => ({
-            id: d['ID'] ? d['ID'].trim() : null, // 去除空白
-            name: d['姓名 (中)'] || d['姓名 (英)'] || 'Unknown',
-            gender: d['性別'] ? d['性別'].trim().toUpperCase() : 'M',
-            fatherId: d['父親ID'] ? d['父親ID'].trim() : null,
-            motherId: d['母親ID'] ? d['母親ID'].trim() : null,
-            spouseId: d['配偶ID'] ? d['配偶ID'].trim() : null,
-            level: null 
-        })).filter(d => d.id); // 濾掉完全沒 ID 的空行
+        // --- 檢查欄位名稱 (關鍵診斷) ---
+        const columns = raw_data.columns;
+        log(`偵測到的欄位: [${columns.join(", ")}]`);
+        
+        // 檢查是否有必要的欄位
+        if (!columns.includes("ID")) log("警告: 找不到 'ID' 欄位，可能是標題有空白或BOM", "warn");
+        if (!columns.includes("父親ID")) log("警告: 找不到 '父親ID' 欄位", "warn");
 
-        // 建立 Map 查找表
+        // --- 資料清洗 (自動去除 Key 的空白) ---
+        const nodes = raw_data.map((d, i) => {
+            // 為了安全，我們建立一個乾淨的物件，去除 key 的前後空白
+            const cleanD = {};
+            for (let key in d) {
+                cleanD[key.trim()] = d[key] ? d[key].trim() : "";
+            }
+
+            // 檢查 ID
+            if (!cleanD['ID']) {
+                log(`跳過第 ${i+1} 行：沒有 ID`, "warn");
+                return null;
+            }
+
+            return {
+                id: cleanD['ID'],
+                name: cleanD['姓名 (中)'] || cleanD['姓名 (英)'] || cleanD['ID'],
+                gender: cleanD['性別'] === 'F' ? 'F' : 'M',
+                fatherId: cleanD['父親ID'] || null,
+                motherId: cleanD['母親ID'] || null,
+                spouseId: cleanD['配偶ID'] || null,
+                level: null 
+            };
+        }).filter(n => n); // 移除空值
+
         const nodeMap = new Map(nodes.map(n => [n.id, n]));
+        log(`有效節點：${nodes.length} 個。開始計算輩分...`);
 
-        updateStatus("資料清洗完成，開始計算輩分(Level)...");
-
-        // --- B. 演算法：安全版遞迴計算 (Safe Recursive Level Calculation) ---
+        // --- 演算法：計算輩分 (Level) ---
         function calculateLevel(nodeId, visited = new Set()) {
-            // 安全檢查 1: ID 不存在或找不到人 -> 回傳 0 (當作祖先)
-            if (!nodeId || !nodeMap.has(nodeId)) return 0;
-            
-            // 安全檢查 2: 防止無窮迴圈 (例如 A是B爸爸, B是A爸爸)
-            if (visited.has(nodeId)) return 0;
+            try {
+                if (!nodeId || !nodeMap.has(nodeId)) return 0;
+                if (visited.has(nodeId)) return 0; // 防止迴圈
 
-            const node = nodeMap.get(nodeId);
-            // 優化: 如果已經算過，直接回傳
-            if (node.level !== null) return node.level;
+                const node = nodeMap.get(nodeId);
+                if (node.level !== null) return node.level;
 
-            visited.add(nodeId);
+                visited.add(nodeId);
 
-            let fatherLevel = -1;
-            let motherLevel = -1;
+                let fLvl = -1, mLvl = -1;
+                if (node.fatherId) fLvl = calculateLevel(node.fatherId, new Set(visited));
+                if (node.motherId) mLvl = calculateLevel(node.motherId, new Set(visited));
 
-            // 遞迴尋找 (如果父親ID存在，且在Map中找得到人，才遞迴)
-            if (node.fatherId && nodeMap.has(node.fatherId)) {
-                fatherLevel = calculateLevel(node.fatherId, new Set(visited));
+                // 核心邏輯
+                node.level = Math.max(fLvl, mLvl) + 1;
+                return node.level;
+            } catch (e) {
+                log(`計算 ${nodeId} 輩分時出錯: ${e.message}`, "error");
+                return 0;
             }
-            if (node.motherId && nodeMap.has(node.motherId)) {
-                motherLevel = calculateLevel(node.motherId, new Set(visited));
-            }
-
-            // 自己 = 父母最大值 + 1
-            // 如果父母都沒找到 (-1)，則自己變成 0 (第一代)
-            const myLevel = Math.max(fatherLevel, motherLevel) + 1;
-            
-            node.level = myLevel;
-            return myLevel;
         }
 
-        // 執行計算
-        try {
-            nodes.forEach(node => calculateLevel(node.id));
-            
-            // 配偶校正
-            nodes.forEach(node => {
-                if (node.level === 0 && node.spouseId && nodeMap.has(node.spouseId)) {
-                    const spouse = nodeMap.get(node.spouseId);
-                    if (spouse.level > 0) node.level = spouse.level;
-                }
-            });
-        } catch (err) {
-            console.error(err);
-            updateStatus("輩分計算發生錯誤，將使用預設顯示", true);
-        }
-
-        updateStatus("輩分計算完成，啟動物理引擎...");
-
-        // --- C. 建立連結 (Links) ---
-        const links = [];
-        nodes.forEach(node => {
-            // 只建立「雙方都存在」的連結，避免報錯
-            if (node.fatherId && nodeMap.has(node.fatherId)) {
-                links.push({ source: node.fatherId, target: node.id, type: 'parent' });
-            }
-            if (node.motherId && nodeMap.has(node.motherId)) {
-                links.push({ source: node.motherId, target: node.id, type: 'parent' });
-            }
-            if (node.spouseId && nodeMap.has(node.spouseId)) {
-                if (node.id < node.spouseId) { // 避免重複連線
-                    links.push({ source: node.id, target: node.spouseId, type: 'spouse' });
-                }
+        nodes.forEach(n => calculateLevel(n.id));
+        
+        // 配偶補正
+        nodes.forEach(n => {
+            if (n.level === 0 && n.spouseId && nodeMap.has(n.spouseId)) {
+                const spouse = nodeMap.get(n.spouseId);
+                if (spouse.level > 0) n.level = spouse.level;
             }
         });
 
-        // --- D. 物理模擬 ---
+        log("輩分計算完成。建立物理連結...");
+
+        // --- 建立連結 ---
+        const links = [];
+        nodes.forEach(n => {
+            if (n.fatherId && nodeMap.has(n.fatherId)) links.push({ source: n.fatherId, target: n.id, type: 'parent' });
+            if (n.motherId && nodeMap.has(n.motherId)) links.push({ source: n.motherId, target: n.id, type: 'parent' });
+            if (n.spouseId && nodeMap.has(n.spouseId)) {
+                if (n.id < n.spouseId) links.push({ source: n.id, target: n.spouseId, type: 'spouse' });
+            }
+        });
+
+        // --- 啟動物理引擎 ---
         const simulation = d3.forceSimulation(nodes)
-            .force("link", d3.forceLink(links).id(d => d.id).distance(d => d.type === 'spouse' ? 60 : 120))
-            .force("charge", d3.forceManyBody().strength(-600)) // 排斥力增強
-            .force("collide", d3.forceCollide().radius(40))
-            .force("center", d3.forceX(width / 2).strength(0.08))
-            // 重力場：如果有算錯導致 level 為空，預設放到 0 層
-            .force("y", d3.forceY(d => ((d.level || 0) * LEVEL_HEIGHT) + 100).strength(2.5));
+            .force("link", d3.forceLink(links).id(d => d.id).distance(d => d.type === 'spouse' ? 50 : 100))
+            .force("charge", d3.forceManyBody().strength(-400))
+            .force("collide", d3.forceCollide().radius(30))
+            .force("center", d3.forceX(width / 2).strength(0.05))
+            .force("y", d3.forceY(d => (d.level * 150) + 100).strength(2));
 
-        // --- E. 繪圖 ---
-        const link = container.append("g")
-            .selectAll(".link")
-            .data(links)
-            .join("line")
+        // --- 繪圖 ---
+        const link = container.append("g").selectAll(".link")
+            .data(links).join("line")
             .attr("class", "link")
-            .attr("stroke", d => d.type === 'spouse' ? '#ff69b4' : '#888')
-            .attr("stroke-dasharray", d => d.type === 'spouse' ? '5,5' : '0');
+            .attr("stroke", d => d.type === 'spouse' ? '#ff69b4' : '#666')
+            .attr("stroke-dasharray", d => d.type === 'spouse' ? '4,4' : '0');
 
-        const node = container.append("g")
-            .selectAll(".node")
-            .data(nodes)
-            .join("g")
+        const node = container.append("g").selectAll(".node")
+            .data(nodes).join("g")
             .attr("class", "node")
-            .call(d3.drag()
-                .on("start", dragstarted)
-                .on("drag", dragged)
-                .on("end", dragended));
+            .call(d3.drag().on("start", dragstarted).on("drag", dragged).on("end", dragended));
 
         node.append("circle")
             .attr("r", 20)
-            .attr("fill", d => d.gender === 'M' ? COLOR_MALE : COLOR_FEMALE);
+            .attr("fill", d => d.gender === 'M' ? '#4A90E2' : '#F5A623');
 
         node.append("text")
             .attr("dy", 35)
@@ -192,37 +194,29 @@
 
         simulation.on("tick", () => {
             link
-                .attr("x1", d => d.source.x)
-                .attr("y1", d => d.source.y)
-                .attr("x2", d => d.target.x)
-                .attr("y2", d => d.target.y);
-
+                .attr("x1", d => d.source.x).attr("y1", d => d.source.y)
+                .attr("x2", d => d.target.x).attr("y2", d => d.target.y);
             node.attr("transform", d => `translate(${d.x},${d.y})`);
         });
 
-        // 拖拽互動
+        // 拖拽
         function dragstarted(event, d) {
             if (!event.active) simulation.alphaTarget(0.3).restart();
-            d.fx = d.x;
-            d.fy = d.y;
+            d.fx = d.x; d.fy = d.y;
         }
-        function dragged(event, d) {
-            d.fx = event.x;
-            d.fy = event.y;
-        }
+        function dragged(event, d) { d.fx = event.x; d.fy = event.y; }
         function dragended(event, d) {
             if (!event.active) simulation.alphaTarget(0);
-            d.fx = null;
-            d.fy = null;
+            d.fx = null; d.fy = null;
         }
 
-        updateStatus(`渲染完成 | 成員：${nodes.length} 人`);
+        log("渲染完成！畫面應已出現。", "info");
+        setTimeout(() => { document.getElementById('debug-panel').style.opacity = 0.5; }, 3000); // 3秒後讓錯誤訊息變透明
 
-    }).catch(error => {
-        console.error(error);
-        updateStatus("連線失敗！請檢查網路或 CORS 設定", true);
+    }).catch(err => {
+        log(`連線或解析失敗: ${err.message}`, "error");
+        log("請檢查 Google Sheet 權限是否為「任何人知道連結皆可檢視」", "error");
     });
-
 </script>
 </body>
 </html>
