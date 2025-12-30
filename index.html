@@ -2,7 +2,7 @@
 <html lang="zh-TW">
 <head>
     <meta charset="UTF-8">
-    <title>家族數位族譜 v7.2</title>
+    <title>家族數位族譜 v7.3</title>
     <script src="https://d3js.org/d3.v7.min.js"></script>
     <style>
         :root { --main-gold: #8b5a2b; --spouse: #e67e22; --active: #3498db; }
@@ -14,20 +14,17 @@
         .node text { font-size: 14px; font-weight: bold; fill: #333; pointer-events: none; }
         .link { fill: none; stroke: #d2c4b5; stroke-width: 2px; }
         .marriage-line { stroke: var(--spouse); stroke-width: 3px; stroke-dasharray: 5; }
-        #loading-msg { position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%); padding: 20px; background: white; border-radius: 10px; box-shadow: 0 0 10px rgba(0,0,0,0.1); z-index: 1000; }
     </style>
 </head>
 <body>
 
-<div id="loading-msg">📡 正在同步雲端資料...</div>
 <div id="tree-container"></div>
 <div id="info-panel">
-    <div id="focus-display" style="background:var(--active); color:white; padding:10px; border-radius:5px; text-align:center; margin-bottom:20px; font-weight:bold;">當前基準點</div>
+    <div id="focus-display" style="background:var(--active); color:white; padding:10px; border-radius:5px; text-align:center; margin-bottom:20px; font-weight:bold;">同步中...</div>
     <div id="detail-content"></div>
 </div>
 
 <script>
-    // 您的 CSV 發佈連結
     const CSV_URL = "https://docs.google.com/spreadsheets/d/e/2PACX-1vSV9UA8RtEJ3d2_Tb9EsIQPeGCf7egp59josXOT4wU3i7fb461XqSqJd4N5ShN89QOt7apY8rStBh4H/pub?output=csv";
 
     let familyData = [];
@@ -39,33 +36,27 @@
     const g = svg.append("g");
 
     d3.csv(CSV_URL).then(data => {
-        document.getElementById('loading-msg').style.display = 'none';
+        const row1 = data[0];
+        // 欄位對應優化
+        const getCol = (names) => Object.keys(row1).find(k => names.some(n => k.replace(/\s+/g, '').includes(n)));
         
-        // 智慧欄位掃描器：只要標題包含關鍵字就能辨識
-        const findKey = (candidates) => {
-            const keys = Object.keys(data[0]);
-            return keys.find(k => candidates.some(c => k.replace(/\s+/g, '').includes(c)));
-        };
-
         const keys = {
-            id: findKey(['ID', 'id']),
-            name: findKey(['姓名']),
-            gender: findKey(['性別']),
-            spouse: findKey(['配偶']),
-            father: findKey(['父親']),
-            mother: findKey(['母親']),
-            photo: findKey(['照片'])
+            id: getCol(['ID', 'id']),
+            name: getCol(['姓名']),
+            gender: getCol(['性別']),
+            spouse: getCol(['配偶']),
+            father: getCol(['父親']),
+            mother: getCol(['母親']),
+            photo: getCol(['照片'])
         };
 
         familyData = data.map(d => {
             const parents = [];
-            // 修正：處理父親 ID 與 母親 ID
             if (keys.father && d[keys.father]) parents.push(d[keys.father].trim());
-            if (keys.mother && d[keys.mother]) parents.push(d[keys.mother].trim());
-
+            // 注意：D3 Tree 只能處理一個 parent 節點，這裡我們預設取第一個作為階層依據
             return {
                 id: d[keys.id] ? d[keys.id].trim() : "",
-                name: d[keys.name] ? d[keys.name].trim() : "未知",
+                name: d[keys.name] ? d[keys.name].trim() : "未命名",
                 gender: d[keys.gender] ? d[keys.gender].trim().toUpperCase() : 'M',
                 photoId: keys.photo && d[keys.photo] ? d[keys.photo].trim() : '',
                 parents: parents,
@@ -77,19 +68,12 @@
         document.getElementById('focus-display').innerText = `當前基準點：${currentFocus.name}`;
         render();
         updateUI(currentFocus);
-    }).catch(err => {
-        document.getElementById('loading-msg').innerHTML = `<b style="color:red">連線失敗</b><br>${err.message}`;
     });
 
-    // 稱謂計算邏輯
     function getRelation(target, source) {
         if (target.id === source.id) return "本人";
         if (target.isSpouseOf === source.id || source.isSpouseOf === target.id) return (target.gender === 'M' ? "丈夫" : "妻子");
-        let sParents = source.parents || [];
-        if (source.isSpouseOf) {
-            const p = familyData.find(f => f.id === source.isSpouseOf);
-            if (p) sParents = p.parents || [];
-        }
+        const sParents = source.parents || [];
         if (sParents.includes(target.id)) return (target.gender === 'M' ? "父親" : "母親");
         if (target.parents.includes(source.id)) return (target.gender === 'M' ? "兒子" : "女兒");
         return "親屬";
@@ -97,25 +81,32 @@
 
     function render() {
         g.selectAll("*").remove();
+        
+        // 繪圖核心：僅處理血親
         const bloodline = familyData.filter(d => !d.isSpouseOf);
-        const root = d3.stratify().id(d => d.id).parentId(d => d.parents[0])(bloodline);
-        d3.tree().nodeSize([120, 300])(root);
+        
+        try {
+            const root = d3.stratify().id(d => d.id).parentId(d => d.parents[0])(bloodline);
+            d3.tree().nodeSize([120, 300])(root);
 
-        g.selectAll(".link").data(root.links()).enter().append("path").attr("class", "link")
-         .attr("d", d3.linkHorizontal().x(d => d.y).y(d => d.x));
+            g.selectAll(".link").data(root.links()).enter().append("path").attr("class", "link")
+             .attr("d", d3.linkHorizontal().x(d => d.y).y(d => d.x));
 
-        const nodeGroups = g.selectAll(".node-group").data(root.descendants()).enter().append("g")
-                            .attr("transform", d => `translate(${d.y}, ${d.x})`);
+            const nodeGroups = g.selectAll(".node-group").data(root.descendants()).enter().append("g")
+                                .attr("transform", d => `translate(${d.y}, ${d.x})`);
 
-        nodeGroups.each(function(d) {
-            const el = d3.select(this);
-            drawNode(el, d.data, 0);
-            const spouse = familyData.find(f => f.isSpouseOf === d.data.id);
-            if (spouse) {
-                el.append("line").attr("class", "marriage-line").attr("x1", 0).attr("y1", 45).attr("x2", 0).attr("y2", 75);
-                drawNode(el, spouse, 120);
-            }
-        });
+            nodeGroups.each(function(d) {
+                const el = d3.select(this);
+                drawNode(el, d.data, 0);
+                const spouse = familyData.find(f => f.isSpouseOf === d.data.id);
+                if (spouse) {
+                    el.append("line").attr("class", "marriage-line").attr("x1", 0).attr("y1", 45).attr("x2", 0).attr("y2", 75);
+                    drawNode(el, spouse, 120);
+                }
+            });
+        } catch (e) {
+            console.error("D3 Stratify Error:", e);
+        }
     }
 
     function drawNode(parent, data, yOffset) {
@@ -138,7 +129,7 @@
                 <img src="https://drive.google.com/uc?export=view&id=${m.photoId}" style="width:130px; height:130px; border-radius:50%; border:4px solid var(--main-gold);" onerror="this.src='https://ui-avatars.com/api/?name=${encodeURIComponent(m.name)}&background=8b5a2b&color=fff'">
                 <h2>${m.name}</h2>
                 <div style="font-size:1.8em; color:var(--spouse); font-weight:bold;">${rel}</div>
-                <hr><p style="color:#999; font-size:0.8em;">點擊頭像切換基準點</p>
+                <hr><p style="color:#999; font-size:0.8em;">點擊頭像可切換視角</p>
             </div>
         `);
     }
