@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>家族數位族譜 V3.3 - 影像穩定版</title>
+    <title>家族數位族譜 V3.4 - 漢語稱謂全方位版</title>
     <script src="https://d3js.org/d3.v7.min.js"></script>
     <style>
         body { margin: 0; overflow: hidden; background: #1a1a1a; font-family: "Microsoft JhengHei", sans-serif; }
@@ -15,14 +15,26 @@
         }
         #canvas { width: 100vw; height: 100vh; cursor: grab; }
         .node circle { stroke: #fff; stroke-width: 2px; transition: stroke 0.3s; cursor: pointer; }
-        .node text { fill: #fff; font-size: 12px; pointer-events: none; text-shadow: 0 1px 3px #000; }
-        .node.selected circle { stroke: #FF4500; stroke-width: 4px; }
+        .node text { fill: #fff; font-size: 13px; pointer-events: none; text-shadow: 0 1px 4px #000; font-weight: bold; }
+        .node.selected circle { stroke: #FF4500 !important; stroke-width: 5px; filter: drop-shadow(0 0 10px #FF4500); }
         
-        /* 側邊欄與 Tooltip 保留 */
-        #sidebar { position: fixed; top: 0; right: -350px; width: 320px; height: 100vh; background: rgba(20,20,20,0.95); border-left: 1px solid #444; transition: 0.4s; z-index: 2000; padding: 20px; color: #eee; }
+        #sidebar { 
+            position: fixed; top: 0; right: -350px; width: 320px; height: 100vh; 
+            background: rgba(20,20,20,0.98); border-left: 1px solid #444; 
+            transition: 0.4s cubic-bezier(0.4, 0, 0.2, 1); z-index: 2000; padding: 25px; color: #eee;
+            box-shadow: -10px 0 30px rgba(0,0,0,0.5); overflow-y: auto;
+        }
         #sidebar.active { right: 0; }
-        #tooltip { position: absolute; background: rgba(0,0,0,0.8); color: #FFD700; padding: 5px 10px; border-radius: 4px; pointer-events: none; opacity: 0; z-index: 3000; }
-        .profile-img { width: 100%; height: 200px; background: #333; object-fit: cover; border-radius: 8px; margin-bottom: 15px; }
+        .profile-img { width: 100%; height: 220px; background: #333; object-fit: cover; border-radius: 12px; margin-bottom: 20px; border: 1px solid #555; }
+        #sb-name { font-size: 28px; margin: 0; }
+        #sb-rel { color: #FFD700; font-size: 18px; margin: 10px 0; border-bottom: 1px solid #444; padding-bottom: 10px; }
+        #sb-bio { line-height: 1.6; color: #ccc; font-size: 15px; }
+        
+        #tooltip { 
+            position: absolute; background: rgba(0,0,0,0.9); color: #FFD700; 
+            padding: 8px 15px; border-radius: 6px; pointer-events: none; 
+            opacity: 0; z-index: 3000; border: 1px solid #FFD700; font-size: 14px;
+        }
     </style>
 </head>
 <body>
@@ -30,19 +42,19 @@
 <div id="status-bar"><span id="status-icon">⏳</span><span id="status-text">初始化系統...</span></div>
 <div id="tooltip"></div>
 <div id="sidebar">
-    <button onclick="closeSidebar()" style="float:right; background:none; border:none; color:white; font-size:20px; cursor:pointer;">×</button>
-    <img id="sb-photo" class="profile-img" src="">
+    <button onclick="closeSidebar()" style="float:right; background:none; border:none; color:white; font-size:28px; cursor:pointer;">&times;</button>
+    <img id="sb-photo" class="profile-img" src="" onerror="this.src='https://via.placeholder.com/300x200?text=No+Photo'">
     <h2 id="sb-name"></h2>
-    <p id="sb-rel" style="color:#FFD700; font-weight:bold;"></p>
+    <p id="sb-rel"></p>
     <div id="sb-bio"></div>
 </div>
 
-<svg id="canvas">
-    <defs id="m-defs"></defs>
-</svg>
+<svg id="canvas"><defs id="m-defs"></defs></svg>
 
 <script>
-    // ⚠️ 請務必替換您的 API 網址
+    // ==========================================
+    // ⚠️ 請務必在此替換您的 API 網址
+    // ==========================================
     const CSV_URL = 'https://script.google.com/macros/s/AKfycby1NXcpTUHm7wDk3_eH53kAVYBlieazThbzNudsLwLADRb1ysEaN6dhRp5rM9ZmyLyGlA/exec'; 
 
     const width = window.innerWidth, height = window.innerHeight;
@@ -52,47 +64,45 @@
     const g = svg.append("g");
     const defs = d3.select("#m-defs");
 
-    svg.call(d3.zoom().on("zoom", (e) => g.attr("transform", e.transform)));
+    svg.call(d3.zoom().scaleExtent([0.1, 8]).on("zoom", (e) => g.attr("transform", e.transform)));
 
     async function loadData() {
         try {
-            updateStatus("同步雲端資料...");
+            updateStatus("同步雲端漢語稱謂庫...");
             const res = await fetch(CSV_URL);
             const data = await res.json();
             
             const nodeMap = new Map();
             data.forEach(d => {
                 if(!d.ID) return;
-                // 建立頭像 Pattern
                 if(d['相片路徑']) {
                     defs.append("pattern")
-                        .attr("id", "img-" + d.ID)
-                        .attr("width", 1).attr("height", 1)
+                        .attr("id", "img-" + d.ID).attr("width", 1).attr("height", 1)
                         .attr("patternContentUnits", "objectBoundingBox")
-                        .append("image")
-                        .attr("href", d['相片路徑'])
-                        .attr("width", 1).attr("height", 1)
-                        .attr("preserveAspectRatio", "xMidYMid slice");
+                        .append("image").attr("href", d['相片路徑']).attr("width", 1).attr("height", 1).attr("preserveAspectRatio", "xMidYMid slice");
                 }
-
                 nodeMap.set(d.ID, {
-                    ...d, id: d.ID, name: d['姓名 (中)'],
-                    gender: d['性別'], level: 0, children: [], siblings: []
+                    ...d, id: d.ID, name: d['姓名 (中)'], gender: d['性別'], level: 0, children: [], siblings: [],
+                    birthDate: d['出生日期'] ? new Date(Math.floor(d['出生日期'] - 25569) * 86400 * 1000) : null
                 });
             });
 
-            // 建立關係
             nodeMap.forEach(n => {
                 if(n.父親ID && nodeMap.has(n.父親ID)) nodeMap.get(n.父親ID).children.push(n);
                 if(n.母親ID && nodeMap.has(n.母親ID)) nodeMap.get(n.母親ID).children.push(n);
             });
 
-            // 計算世代
-            for(let i=0; i<8; i++){
+            for(let i=0; i<10; i++){
                 nodeMap.forEach(n => {
-                    if(n.父親ID && nodeMap.has(n.父親ID)) n.level = nodeMap.get(n.父親ID).level + 1;
+                    if(n.父親ID && nodeMap.has(n.父親ID)) n.level = Math.max(n.level, nodeMap.get(n.父親ID).level + 1);
+                    if(n.母親ID && nodeMap.has(n.母親ID)) n.level = Math.max(n.level, nodeMap.get(n.母親ID).level + 1);
                 });
             }
+
+            nodeMap.forEach(n => {
+                const parents = [n.父親ID, n.母親ID].filter(p => p && nodeMap.has(p));
+                parents.forEach(p => nodeMap.get(p).children.forEach(s => { if(s.id !== n.id && !n.siblings.includes(s)) n.siblings.push(s); }));
+            });
 
             allNodes = Array.from(nodeMap.values());
             const links = [];
@@ -103,38 +113,90 @@
             });
 
             render(allNodes, links);
-            updateStatus("系統穩定運行中", "success");
-        } catch(e) { updateStatus("連線錯誤: " + e.message, "error"); }
+            updateStatus(`族譜就緒 | 載入 ${allNodes.length} 位成員`, "success");
+        } catch(e) { updateStatus("讀取失敗: " + e.message, "error"); }
+    }
+
+    function calculateKinship(center, target, nodeMap) {
+        if (center.id === target.id) return "本人";
+        let queue = [{ node: center, path: [] }], visited = new Set([center.id]);
+        
+        while (queue.length > 0) {
+            let curr = queue.shift();
+            if (curr.path.length > 5) continue;
+            if (curr.node.id === target.id) {
+                const ps = curr.path.join('-');
+                const dict = {
+                    'F':'父親','M':'母親','S':'兒子','D':'女兒','H':'丈夫','W':'妻子',
+                    'XB':'哥哥','YB':'弟弟','XS':'姊姊','YS':'妹妹','Bro':'兄弟','Sis':'姊妹',
+                    'F-F':'祖父','F-M':'祖母','M-F':'外祖父','M-M':'外祖母',
+                    'S-S':'孫子','S-D':'孫女','D-S':'外孫','D-D':'外孫女',
+                    'F-XB':'伯父','F-YB':'叔叔','F-XS':'姑媽','F-YS':'姑姐','M-XB':'舅舅','M-XS':'阿姨',
+                    // 擴充：長輩姻親
+                    'F-XB-W':'伯母','F-YB-W':'嬸嬸','F-F-XB-W':'嬸婆','F-F-YB-W':'嬸婆','M-F-Bro':'舅公','F-F-Bro':'伯叔公',
+                    // 擴充：晚輩姻親
+                    'S-W':'兒媳','D-H':'女婿',
+                    // 擴充：配偶長輩
+                    'W-F':'岳父','W-M':'岳母','H-F':'公公','H-M':'婆婆'
+                };
+                if (dict[ps]) return dict[ps];
+                
+                // 動態判定：同輩姻親 (嫂子/弟媳/姊夫/妹婿)
+                if (ps === 'XB-W') return "嫂子";
+                if (ps === 'YB-W') return "弟媳";
+                if (ps === 'Bro-W') return "妯娌/姻親";
+                if (ps === 'XS-H') return "姊夫";
+                if (ps === 'YS-H') return "妹婿";
+                if (ps === 'Sis-H') return "連襟/姻親";
+
+                // 模糊匹配堂表
+                if (ps.match(/^F-(XB|YB|Bro)-(S|D)$/)) return "堂" + (target.gender==='F'?'姊妹':'兄弟');
+                if (ps.match(/^(F-XS|F-YS|F-Sis|M)-(S|D)$/)) return "表" + (target.gender==='F'?'姊妹':'兄弟');
+                return "親戚";
+            }
+            const n = curr.node;
+            if (n.父親ID && nodeMap.has(n.父親ID) && !visited.has(n.父親ID)) { visited.add(n.父親ID); queue.push({node:nodeMap.get(n.父親ID), path:[...curr.path,'F']}); }
+            if (n.母親ID && nodeMap.has(n.母親ID) && !visited.has(n.母親ID)) { visited.add(n.母親ID); queue.push({node:nodeMap.get(n.母親ID), path:[...curr.path,'M']}); }
+            n.children.forEach(c => { if(!visited.has(c.id)){ visited.add(c.id); queue.push({node:c, path:[...curr.path, c.gender==='F'?'D':'S']}); }});
+            if (n.配偶ID && nodeMap.has(n.配偶ID) && !visited.has(n.配偶ID)) { visited.add(n.配偶ID); queue.push({node:nodeMap.get(n.配偶ID), path:[...curr.path, nodeMap.get(n.配偶ID).gender==='F'?'W':'H']}); }
+            n.siblings.forEach(s => { 
+                if(!visited.has(s.id)){ 
+                    visited.add(s.id); 
+                    let tag = s.gender==='F'?(n.birthDate && s.birthDate ? (n.birthDate > s.birthDate ? 'XS':'YS') : 'Sis') : (n.birthDate && s.birthDate ? (n.birthDate > s.birthDate ? 'XB':'YB') : 'Bro');
+                    queue.push({node:s, path:[...curr.path, tag]});
+                }
+            });
+        }
+        return "親戚";
     }
 
     function render(nodes, links) {
         simulation = d3.forceSimulation(nodes)
-            .force("link", d3.forceLink(links).id(d => d.id).distance(100))
-            .force("charge", d3.forceManyBody().strength(-500))
-            .force("y", d3.forceY(d => d.level * 150).strength(0.5))
-            .alphaDecay(0.05); // 讓模擬更快安靜下來，避免轉圈圈
+            .force("link", d3.forceLink(links).id(d => d.id).distance(120))
+            .force("charge", d3.forceManyBody().strength(-600))
+            .force("y", d3.forceY(d => d.level * 180).strength(0.6))
+            .alphaDecay(0.06);
 
-        const link = g.append("g").selectAll("line").data(links).join("line").attr("stroke","#444");
+        const link = g.append("g").selectAll("line").data(links).join("line").attr("stroke","#555").attr("stroke-width", 1.5);
+        const node = g.append("g").selectAll("g").data(nodes).join("g").attr("class", "node").call(d3.drag().on("start", dragstarted).on("drag", dragged).on("end", dragended));
 
-        const node = g.append("g").selectAll("g").data(nodes).join("g")
-            .attr("class", "node")
-            .call(d3.drag().on("start", dragStarted).on("drag", dragged).on("end", dragEnded));
-
-        node.append("circle")
-            .attr("r", 30)
-            .attr("fill", d => {
-                // 如果有照片路徑，使用定義好的 Pattern，否則使用色塊
-                return d['相片路徑'] ? `url(#img-${d.id})` : (d.gender === 'F' ? '#F5A623' : '#4A90E2');
-            })
-            .style("stroke", d => d.gender === 'F' ? '#F5A623' : '#4A90E2');
-
-        node.append("text").attr("dy", 45).attr("text-anchor", "middle").text(d => d.name);
+        node.append("circle").attr("r", 35).attr("fill", d => d['相片路徑'] ? `url(#img-${d.id})` : (d.gender === 'F' ? '#F5A623' : '#4A90E2')).style("stroke", d => d.gender === 'F' ? '#F5A623' : '#4A90E2');
+        node.append("text").attr("dy", 55).attr("text-anchor", "middle").text(d => d.name);
 
         node.on("click", (e, d) => {
+            e.stopPropagation();
             currentCenterId = d.id;
             d3.selectAll(".node").classed("selected", n => n.id === d.id);
+            const nodeMap = new Map(allNodes.map(n => [n.id, n]));
+            allNodes.forEach(t => { t.tempRel = calculateKinship(d, t, nodeMap); });
             openSidebar(d);
         });
+
+        node.on("mouseenter", (e, d) => {
+            let txt = d.name + (currentCenterId && d.tempRel ? ` (${d.tempRel})` : "");
+            d3.select("#tooltip").style("opacity", 1).text(txt).style("left", e.pageX+"px").style("top", (e.pageY-30)+"px");
+        }).on("mousemove", (e) => d3.select("#tooltip").style("left", e.pageX+"px").style("top", (e.pageY-30)+"px"))
+        .on("mouseleave", () => d3.select("#tooltip").style("opacity", 0));
 
         simulation.on("tick", () => {
             link.attr("x1", d => d.source.x).attr("y1", d => d.source.y).attr("x2", d => d.target.x).attr("y2", d => d.target.y);
@@ -142,24 +204,19 @@
         });
     }
 
-    function updateStatus(t, s) {
-        const bar = d3.select("#status-text").text(t);
-        d3.select("#status-icon").text(s === "success" ? "✅" : (s === "error" ? "❌" : "⏳"));
-    }
-
+    function updateStatus(t, s) { d3.select("#status-text").text(t); d3.select("#status-icon").text(s === "success" ? "✅" : (s === "error" ? "❌" : "⏳")); }
     function openSidebar(d) {
         d3.select("#sb-name").text(d.name);
         d3.select("#sb-photo").attr("src", d['相片路徑'] || "");
+        d3.select("#sb-rel").text(d.tempRel ? "與您的關係： " + d.tempRel : "點擊其他成員查看關係");
         d3.select("#sb-bio").text(d['個人簡介'] || "暫無簡介");
         d3.select("#sidebar").classed("active", true);
     }
-    function closeSidebar() { d3.select("#sidebar").classed("active", false); }
-    function dragStarted(e, d) { if (!e.active) simulation.alphaTarget(0.3).restart(); d.fx = d.x; d.fy = d.y; }
+    function closeSidebar() { d3.select("#sidebar").classed("active", false); currentCenterId = null; d3.selectAll(".node").classed("selected", false); }
+    function dragstarted(e, d) { if (!e.active) simulation.alphaTarget(0.3).restart(); d.fx = d.x; d.fy = d.y; }
     function dragged(e, d) { d.fx = e.x; d.fy = e.y; }
     function dragended(e, d) { if (!e.active) simulation.alphaTarget(0); d.fx = null; d.fy = null; }
-
     loadData();
 </script>
 </body>
 </html>
-
