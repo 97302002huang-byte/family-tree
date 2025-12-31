@@ -3,13 +3,12 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>家族數位族譜 V3.0 - 互動核心版</title>
+    <title>家族數位族譜 V3.1 - JSON API 優化版</title>
     <script src="https://d3js.org/d3.v7.min.js"></script>
     <style>
         /* --- 基礎樣式 --- */
         body { margin: 0; overflow: hidden; background: #1a1a1a; font-family: "Microsoft JhengHei", sans-serif; }
         
-        /* 狀態列 (保留 V2 功能) */
         #status-bar { 
             position: fixed; top: 20px; left: 50%; transform: translateX(-50%);
             background: rgba(0, 0, 0, 0.85); color: #00ff9d; 
@@ -19,43 +18,22 @@
             display: flex; align-items: center; gap: 10px;
         }
 
-        /* 畫布 */
         #canvas { width: 100vw; height: 100vh; cursor: grab; }
-        #canvas:active { cursor: grabbing; }
-
-        /* 節點樣式 */
-        .node circle { stroke: #fff; stroke-width: 2px; transition: all 0.3s; }
-        .node text { 
-            fill: #fff; font-size: 12px; text-shadow: 0 1px 3px rgba(0,0,0,0.8); 
-            pointer-events: none; /* 讓滑鼠穿透文字，直接偵測圓圈 */
-        }
+        .node circle { stroke: #fff; stroke-width: 2px; transition: all 0.3s; cursor: pointer; }
+        .node text { fill: #fff; font-size: 12px; text-shadow: 0 1px 3px rgba(0,0,0,0.8); pointer-events: none; }
         .node:hover circle { stroke: #FFD700; stroke-width: 4px; filter: drop-shadow(0 0 8px #FFD700); }
+        .node.selected circle { fill: #FF4500 !important; stroke: #fff; transform: scale(1.2); }
 
-        /* --- V3.0 新增介面 --- */
-
-        /* 側邊欄 (Sidebar) */
+        /* 側邊欄 */
         #sidebar {
-            position: fixed; top: 0; right: -350px; /* 預設隱藏 */
-            width: 320px; height: 100vh;
-            background: rgba(20, 20, 20, 0.95);
-            border-left: 1px solid #444;
-            backdrop-filter: blur(10px);
-            transition: right 0.4s ease-in-out;
-            z-index: 2000;
-            padding: 20px;
-            box-sizing: border-box;
-            color: #eee;
-            overflow-y: auto; /* 內容過長可捲動 */
+            position: fixed; top: 0; right: -350px; width: 320px; height: 100vh;
+            background: rgba(20, 20, 20, 0.95); border-left: 1px solid #444;
+            backdrop-filter: blur(10px); transition: right 0.4s ease-in-out;
+            z-index: 2000; padding: 20px; box-sizing: border-box; color: #eee; overflow-y: auto;
         }
         #sidebar.active { right: 0; }
-        #sidebar-close {
-            position: absolute; top: 15px; right: 20px;
-            background: none; border: none; color: #fff; font-size: 24px; cursor: pointer;
-        }
-        .profile-img-container {
-            width: 100%; height: 200px; background: #333;
-            border-radius: 10px; overflow: hidden; margin-bottom: 20px;
-        }
+        #sidebar-close { position: absolute; top: 15px; right: 20px; background: none; border: none; color: #fff; font-size: 24px; cursor: pointer; }
+        .profile-img-container { width: 100%; height: 200px; background: #333; border-radius: 10px; overflow: hidden; margin-bottom: 20px; }
         #sb-photo { width: 100%; height: 100%; object-fit: cover; }
         #sb-name { margin: 0 0 5px 0; font-size: 28px; border-bottom: 1px solid #444; padding-bottom: 10px; }
         #sb-dates { color: #888; font-size: 14px; margin-bottom: 20px; font-style: italic; }
@@ -63,26 +41,21 @@
         .sb-label { color: #aaa; font-size: 12px; display: block; margin-bottom: 4px; }
         .sb-value { font-size: 15px; line-height: 1.5; }
 
-        /* 懸停提示 (Tooltip) */
+        /* Tooltip */
         #tooltip {
-            position: absolute; 
-            background: rgba(0, 0, 0, 0.9); border: 1px solid #FFD700;
+            position: absolute; background: rgba(0, 0, 0, 0.9); border: 1px solid #FFD700;
             color: #FFD700; padding: 8px 12px; border-radius: 6px;
             font-size: 14px; pointer-events: none; opacity: 0;
-            transform: translate(-50%, -150%); /* 顯示在滑鼠上方 */
-            transition: opacity 0.2s; z-index: 3000;
-            white-space: nowrap;
-            box-shadow: 0 4px 10px rgba(0,0,0,0.5);
+            transform: translate(-50%, -150%); transition: opacity 0.2s; z-index: 3000;
+            white-space: nowrap; box-shadow: 0 4px 10px rgba(0,0,0,0.5);
         }
-        /* 當前選中效果 */
-        .node.selected circle { fill: #FF4500 !important; stroke: #fff; transform: scale(1.2); }
     </style>
 </head>
 <body>
 
     <div id="status-bar">
         <span id="status-icon">⏳</span>
-        <span id="status-text">系統初始化中...</span>
+        <span id="status-text">系統載入中...</span>
     </div>
 
     <div id="tooltip"></div>
@@ -90,517 +63,198 @@
     <div id="sidebar">
         <button id="sidebar-close" onclick="closeSidebar()">×</button>
         <div class="profile-img-container">
-            <img id="sb-photo" src="" onerror="this.src='https://via.placeholder.com/300x200?text=No+Image'">
+            <img id="sb-photo" src="" onerror="this.src='https://via.placeholder.com/300x200?text=No+Photo'">
         </div>
         <h2 id="sb-name"></h2>
         <div id="sb-dates"></div>
-        
-        <div class="sb-field">
-            <span class="sb-label">性別</span>
-            <span class="sb-value" id="sb-gender"></span>
-        </div>
-        <div class="sb-field">
-            <span class="sb-label">個人簡介</span>
-            <div class="sb-value" id="sb-bio"></div>
-        </div>
+        <div class="sb-field"><span class="sb-label">性別</span><span id="sb-gender"></span></div>
+        <div class="sb-field"><span class="sb-label">個人簡介</span><div id="sb-bio"></div></div>
     </div>
 
     <svg id="canvas"></svg>
 
     <script>
         // ==========================================
-        // 1. 設定與全域變數
+        // ⚠️ 請在此貼上您的 Google Apps Script 網址 ⚠️
         // ==========================================
-        
-        // ⚠️⚠️ 請在此填入您的 Google Apps Script 網址 (或 CSV 檔案路徑) ⚠️⚠️
-        const CSV_URL = 'https://script.google.com/macros/s/AKfycby1NXcpTUHm7wDk3_eH53kAVYBlieazThbzNudsLwLADRb1ysEaN6dhRp5rM9ZmyLyGlA/exec'; // 如果是測試，保持檔名；如果是正式版，請換成網址
+        const CSV_URL = 'https://script.google.com/macros/s/AKfycby1NXcpTUHm7wDk3_eH53kAVYBlieazThbzNudsLwLADRb1ysEaN6dhRp5rM9ZmyLyGlA/exec'; 
 
         const width = window.innerWidth;
         const height = window.innerHeight;
-        let allNodes = []; // 原始資料
-        let simulation;    // 物理模擬器
-        let currentCenterId = null; // 當前被點擊的成員 ID
+        let allNodes = [];
+        let simulation;
+        let currentCenterId = null;
 
-        // D3 物件
-        const svg = d3.select("#canvas")
-            .attr("viewBox", [-width / 2, -height / 2, width, height]);
-        const g = svg.append("g"); // 縮放群組
+        const svg = d3.select("#canvas").attr("viewBox", [-width / 2, -height / 2, width, height]);
+        const g = svg.append("g");
 
-        // 縮放行為
-        svg.call(d3.zoom()
-            .extent([[0, 0], [width, height]])
-            .scaleExtent([0.1, 8])
-            .on("zoom", (event) => g.attr("transform", event.transform)));
+        svg.call(d3.zoom().scaleExtent([0.1, 8]).on("zoom", (event) => g.attr("transform", event.transform)));
 
-        // 更新狀態列工具
         function updateStatus(msg, type = 'normal') {
             const el = document.getElementById('status-text');
             const icon = document.getElementById('status-icon');
             el.textContent = msg;
-            if (type === 'error') {
-                el.style.color = '#ff4444';
-                icon.textContent = '❌';
-            } else if (type === 'success') {
-                el.style.color = '#00ff9d';
-                icon.textContent = '✅';
-            } else {
-                icon.textContent = '⏳';
-            }
+            el.style.color = (type === 'error') ? '#ff4444' : '#00ff9d';
+            icon.textContent = (type === 'error') ? '❌' : (type === 'success' ? '✅' : '⏳');
         }
 
-        // ==========================================
-        // 2. 資料處理核心 (ETL Pipeline)
-        // ==========================================
-
-        // 解析 Excel 序列號日期 (如 20469)
         function parseExcelDate(serial) {
             if (!serial || isNaN(serial)) return null; 
-            // Excel base date: 1899-12-30
-            const utc_days  = Math.floor(serial - 25569);
-            const utc_value = utc_days * 86400;
-            return new Date(utc_value * 1000);
+            return new Date(Math.floor(serial - 25569) * 86400 * 1000);
         }
 
         async function loadData() {
             try {
-                updateStatus("正在連線至資料庫...");
-                // 讀取 CSV
-                const rawData = await d3.csv(CSV_URL);
+                updateStatus("正在從 API 獲取資料...");
+                // 💡 改用 fetch 直接獲取 JSON 資料，而非 d3.csv
+                const response = await fetch(CSV_URL);
+                if (!response.ok) throw new Error("網路請求失敗");
                 
+                const rawData = await response.json();
                 if (!rawData || rawData.length === 0) throw new Error("讀取到的資料為空");
 
-                // 資料清洗與結構化
+                updateStatus("資料載入成功，正在建構網路...");
+                
                 const nodeMap = new Map();
-
-                // 第一輪：建立基本節點
                 rawData.forEach(d => {
-                    const id = d['ID'];
-                    if (!id) return;
-
-                    const birthDate = parseExcelDate(d['出生日期']); // 解析日期
-                    
+                    if (!d['ID']) return;
                     const node = {
-                        id: id,
+                        id: d['ID'],
                         name: d['姓名 (中)'] || '未知',
-                        engName: d['姓名 (英)'],
-                        gender: d['性別'] === 'F' ? 'F' : 'M', // 預設 M 防止錯誤
-                        birthDate: birthDate,
+                        gender: d['性別'] === 'F' ? 'F' : 'M',
+                        birthDate: parseExcelDate(d['出生日期']),
                         photo: d['相片路徑'],
                         bio: d['個人簡介'],
                         spouseId: d['配偶ID'],
                         fatherId: d['父親ID'],
                         motherId: d['母親ID'],
-                        
-                        // 關係陣列 (稍後填充)
                         children: [],
-                        siblings: [], 
-                        
-                        // D3 物理屬性
+                        siblings: [],
                         level: 0
                     };
-                    nodeMap.set(id, node);
+                    nodeMap.set(node.id, node);
                 });
 
-                // 第二輪：建立親子連結
+                // 建立親子與手足連結
                 nodeMap.forEach(node => {
-                    // 連結父親
-                    if (node.fatherId && nodeMap.has(node.fatherId)) {
-                        nodeMap.get(node.fatherId).children.push(node);
-                    }
-                    // 連結母親
-                    if (node.motherId && nodeMap.has(node.motherId)) {
-                        nodeMap.get(node.motherId).children.push(node);
-                    }
+                    if (node.fatherId && nodeMap.has(node.fatherId)) nodeMap.get(node.fatherId).children.push(node);
+                    if (node.motherId && nodeMap.has(node.motherId)) nodeMap.get(node.motherId).children.push(node);
                 });
 
-                // 第三輪：建立兄弟姊妹 (依據父母)
                 nodeMap.forEach(node => {
                     const parents = [node.fatherId, node.motherId].filter(pid => pid && nodeMap.has(pid));
                     parents.forEach(pid => {
-                        const parent = nodeMap.get(pid);
-                        parent.children.forEach(sibling => {
-                            if (sibling.id !== node.id && !node.siblings.includes(sibling)) {
-                                node.siblings.push(sibling);
-                            }
+                        nodeMap.get(pid).children.forEach(sib => {
+                            if (sib.id !== node.id && !node.siblings.includes(sib)) node.siblings.push(sib);
                         });
                     });
-                    
-                    // 排序兄弟姊妹：有生日比生日，沒生日比ID (確保穩定性)
-                    node.siblings.sort((a, b) => {
-                        if (a.birthDate && b.birthDate) return a.birthDate - b.birthDate;
-                        return a.id.localeCompare(b.id);
-                    });
+                    node.siblings.sort((a, b) => (a.birthDate && b.birthDate) ? a.birthDate - b.birthDate : a.id.localeCompare(b.id));
                 });
 
-                // 第四輪：計算世代 (Level) 用於 Y 軸分層
-                // 簡單邏輯：如果有父親，Level = 父親 Level + 1
-                // 為避免無限迴圈，設定最大迭代
-                let changed = true;
-                let iterations = 0;
-                while (changed && iterations < 10) {
-                    changed = false;
+                // 計算分層 (Level)
+                for (let i = 0; i < 10; i++) {
                     nodeMap.forEach(node => {
-                        let newLevel = node.level;
-                        if (node.fatherId && nodeMap.has(node.fatherId)) {
-                            newLevel = Math.max(newLevel, nodeMap.get(node.fatherId).level + 1);
-                        }
-                        if (node.motherId && nodeMap.has(node.motherId)) {
-                            newLevel = Math.max(newLevel, nodeMap.get(node.motherId).level + 1);
-                        }
-                        if (newLevel !== node.level) {
-                            node.level = newLevel;
-                            changed = true;
-                        }
+                        if (node.fatherId && nodeMap.has(node.fatherId)) node.level = Math.max(node.level, nodeMap.get(node.fatherId).level + 1);
+                        if (node.motherId && nodeMap.has(node.motherId)) node.level = Math.max(node.level, nodeMap.get(node.motherId).level + 1);
                     });
-                    iterations++;
                 }
 
                 allNodes = Array.from(nodeMap.values());
-                
-                // 建立 D3 Links
                 const links = [];
                 allNodes.forEach(node => {
-                    if (node.fatherId && nodeMap.has(node.fatherId)) {
-                        links.push({ source: node.fatherId, target: node.id, type: 'parent' });
-                    }
-                    if (node.motherId && nodeMap.has(node.motherId)) {
-                        links.push({ source: node.motherId, target: node.id, type: 'parent' });
-                    }
-                    if (node.spouseId && nodeMap.has(node.spouseId)) {
-                        // 避免重複連結 (A-B 和 B-A)
-                        if (node.id < node.spouseId) { 
-                            links.push({ source: node.id, target: node.spouseId, type: 'spouse' });
-                        }
-                    }
+                    if (node.fatherId && nodeMap.has(node.fatherId)) links.push({ source: node.fatherId, target: node.id });
+                    if (node.motherId && nodeMap.has(node.motherId)) links.push({ source: node.motherId, target: node.id });
+                    if (node.spouseId && nodeMap.has(node.spouseId) && node.id < node.spouseId) links.push({ source: node.id, target: node.spouseId });
                 });
 
                 initSimulation(allNodes, links);
-                updateStatus(`系統就緒 | 成員數: ${allNodes.length}`, 'success');
+                updateStatus(`成功連線 | 成員: ${allNodes.length}`, 'success');
 
             } catch (error) {
                 console.error(error);
-                updateStatus(`資料載入失敗: ${error.message}`, 'error');
+                updateStatus(`發生錯誤: ${error.message}`, 'error');
             }
         }
 
-        // ==========================================
-        // 3. 稱謂計算引擎 (Kinship Algorithm)
-        // ==========================================
-
-        // 比較兩兄弟姊妹的長幼
-        // 回傳: "elder", "younger", "unknown"
-        function compareSiblings(center, target) {
-            if (center.birthDate && target.birthDate) {
-                return center.birthDate > target.birthDate ? "younger" : "elder"; // 我生日大 = 我年紀小
-            }
-            // 容錯：若無日期，無法判斷
-            return "unknown";
-        }
-
-        // 核心演算法：計算 Center 對 Target 的稱謂
         function calculateKinship(center, target, nodeMap) {
             if (center.id === target.id) return "本人";
-
-            // 使用 BFS 尋找路徑
-            let queue = [{ node: center, path: [], rel: "" }];
+            let queue = [{ node: center, path: [] }];
             let visited = new Set([center.id]);
-            let foundPath = null;
-
-            // 限制搜尋深度，防止當機
-            const MAX_DEPTH = 5; 
-
             while (queue.length > 0) {
-                let current = queue.shift();
-                
-                if (current.path.length > MAX_DEPTH) continue;
-
-                if (current.node.id === target.id) {
-                    foundPath = current.path;
-                    break;
+                let curr = queue.shift();
+                if (curr.path.length > 5) continue;
+                if (curr.node.id === target.id) {
+                    const ps = curr.path.join('-');
+                    const dict = {
+                        'F':'父親','M':'母親','S':'兒子','D':'女兒','H':'丈夫','W':'妻子',
+                        'XB':'哥哥','YB':'弟弟','XS':'姊姊','YS':'妹妹','Bro':'兄弟','Sis':'姊妹',
+                        'F-F':'祖父','F-M':'祖母','M-F':'外祖父','M-M':'外祖母','F-XB':'伯父','F-YB':'叔叔'
+                    };
+                    if (dict[ps]) return dict[ps];
+                    if (ps.match(/^F-(XB|YB|Bro)-(S|D)$/)) return "堂" + (target.gender==='M'?'兄弟':'姊妹');
+                    return "親戚";
                 }
-
-                // 擴展鄰居 (父母、子女、配偶、手足)
-                
-                // 1. 找父母 (F/M)
-                if (current.node.fatherId && nodeMap.has(current.node.fatherId)) {
-                    let father = nodeMap.get(current.node.fatherId);
-                    if (!visited.has(father.id)) {
-                        visited.add(father.id);
-                        queue.push({ node: father, path: [...current.path, 'F'] });
-                    }
-                }
-                if (current.node.motherId && nodeMap.has(current.node.motherId)) {
-                    let mother = nodeMap.get(current.node.motherId);
-                    if (!visited.has(mother.id)) {
-                        visited.add(mother.id);
-                        queue.push({ node: mother, path: [...current.path, 'M'] });
-                    }
-                }
-
-                // 2. 找子女 (S/D)
-                current.node.children.forEach(child => {
-                    if (!visited.has(child.id)) {
-                        visited.add(child.id);
-                        let tag = child.gender === 'M' ? 'S' : 'D';
-                        queue.push({ node: child, path: [...current.path, tag] });
-                    }
-                });
-
-                // 3. 找配偶 (H/W)
-                if (current.node.spouseId && nodeMap.has(current.node.spouseId)) {
-                    let spouse = nodeMap.get(current.node.spouseId);
-                    if (!visited.has(spouse.id)) {
-                        visited.add(spouse.id);
-                        let tag = spouse.gender === 'M' ? 'H' : 'W';
-                        queue.push({ node: spouse, path: [...current.path, tag] });
-                    }
-                }
-
-                // 4. 找手足 (B/Z) - 優化路徑：如果是父母的小孩，直接算手足
-                // 這裡為了簡化，如果 BFS 已經走過父母，通常會通過父母找到手足。
-                // 但為了處理只有手足沒有父母資料的孤兒節點，我們直接加鄰居
-                current.node.siblings.forEach(sib => {
-                    if (!visited.has(sib.id)) {
-                        visited.add(sib.id);
-                        // 判斷長幼
-                        let order = compareSiblings(current.node, sib); // 相對於 current
-                        let tag = 'XB'; // 預設
-                        if (sib.gender === 'M') {
-                            if (order === 'elder') tag = 'XB'; // 兄
-                            else if (order === 'younger') tag = 'YB'; // 弟
-                            else tag = 'Bro'; // 未知兄或弟
-                        } else {
-                            if (order === 'elder') tag = 'XS'; // 姊
-                            else if (order === 'younger') tag = 'YS'; // 妹
-                            else tag = 'Sis'; // 未知姊或妹
-                        }
-                        queue.push({ node: sib, path: [...current.path, tag] });
+                const n = curr.node;
+                if (n.fatherId && nodeMap.has(n.fatherId) && !visited.has(n.fatherId)) { visited.add(n.fatherId); queue.push({node:nodeMap.get(n.fatherId), path:[...curr.path,'F']}); }
+                if (n.motherId && nodeMap.has(n.motherId) && !visited.has(n.motherId)) { visited.add(n.motherId); queue.push({node:nodeMap.get(n.motherId), path:[...curr.path,'M']}); }
+                n.children.forEach(c => { if(!visited.has(c.id)){ visited.add(c.id); queue.push({node:c, path:[...curr.path, c.gender==='M'?'S':'D']}); }});
+                if (n.spouseId && nodeMap.has(n.spouseId) && !visited.has(n.spouseId)) { visited.add(n.spouseId); queue.push({node:nodeMap.get(n.spouseId), path:[...curr.path, nodeMap.get(n.spouseId).gender==='M'?'H':'W']}); }
+                n.siblings.forEach(s => { 
+                    if(!visited.has(s.id)){ 
+                        visited.add(s.id); 
+                        let tag = s.gender==='M'?(n.birthDate>s.birthDate?'XB':'YB'):(n.birthDate>s.birthDate?'XS':'YS');
+                        queue.push({node:s, path:[...curr.path, tag]});
                     }
                 });
             }
-
-            if (!foundPath) return "親戚"; // 找不到路徑
-
-            // 路徑翻譯機 (Dictionary)
-            const pathStr = foundPath.join('-');
-            
-            // --- 直系與近親字典 ---
-            const dict = {
-                // 父母
-                'F': '父親', 'M': '母親',
-                // 配偶
-                'H': '丈夫', 'W': '妻子',
-                // 子女
-                'S': '兒子', 'D': '女兒',
-                // 手足 (精確)
-                'XB': '哥哥', 'YB': '弟弟', 'XS': '姊姊', 'YS': '妹妹',
-                // 手足 (模糊)
-                'Bro': '兄弟', 'Sis': '姊妹',
-                
-                // 祖父母
-                'F-F': '祖父', 'F-M': '祖母', 'M-F': '外祖父', 'M-M': '外祖母',
-                // 孫輩
-                'S-S': '孫子', 'S-D': '孫女', 'D-S': '外孫', 'D-D': '外孫女',
-                
-                // 伯叔姑舅姨
-                'F-XB': '伯父', 'F-YB': '叔叔', 'F-Bro': '伯/叔',
-                'F-XS': '姑媽', 'F-YS': '姑姐', 'F-Sis': '姑姑',
-                'M-XB': '舅舅', 'M-YB': '舅舅', 'M-Bro': '舅舅',
-                'M-XS': '阿姨', 'M-YS': '阿姨', 'M-Sis': '阿姨',
-
-                // 堂表兄弟姊妹 (簡化版，不分大小)
-                // 只要是 F-XB-S (伯父的兒子) -> 堂兄弟
-                // 這裡使用正則表達式或通用邏輯會更好，這裡列舉常見
-            };
-
-            if (dict[pathStr]) return dict[pathStr];
-
-            // --- 模糊匹配邏輯 (Fallback) ---
-            
-            // 堂表親規則
-            if (pathStr.match(/^F-(XB|YB|Bro)-(S|D)$/)) return "堂" + (target.gender==='M'?'兄弟':'姊妹');
-            if (pathStr.match(/^F-(XS|YS|Sis)-(S|D)$/)) return "表" + (target.gender==='M'?'兄弟':'姊妹');
-            if (pathStr.match(/^M-.*-(S|D)$/)) return "表" + (target.gender==='M'?'兄弟':'姊妹');
-
-            // 姻親
-            if (pathStr.endsWith('W')) return "嫂/嬸/媳/妻"; 
-            if (pathStr.endsWith('H')) return "夫/婿/丈";
-
-            return "親戚"; // 最後防線
+            return "親戚";
         }
 
-        // ==========================================
-        // 4. 視覺化與互動 (Visualization)
-        // ==========================================
-
         function initSimulation(nodes, links) {
-            
-            // 物理模擬設定
             simulation = d3.forceSimulation(nodes)
-                .force("link", d3.forceLink(links).id(d => d.id).distance(100))
-                .force("charge", d3.forceManyBody().strength(-400))
-                .force("center", d3.forceCenter(0, 0)) // 初始居中，之後可拖動
-                .force("y", d3.forceY(d => d.level * 120).strength(0.5)) // 世代重力
-                .force("x", d3.forceX(0).strength(0.05));
+                .force("link", d3.forceLink(links).id(d => d.id).distance(80))
+                .force("charge", d3.forceManyBody().strength(-300))
+                .force("center", d3.forceCenter(0, 0))
+                .force("y", d3.forceY(d => d.level * 150).strength(0.5));
 
-            // 繪製連結線
-            const link = g.append("g")
-                .selectAll("line")
-                .data(links)
-                .join("line")
-                .attr("stroke", "#555")
-                .attr("stroke-width", 1.5)
-                .attr("opacity", 0.6);
+            const link = g.append("g").selectAll("line").data(links).join("line").attr("stroke", "#444").attr("stroke-width", 1.5);
+            const node = g.append("g").selectAll("g").data(nodes).join("g").attr("class", "node")
+                .call(d3.drag().on("start", (e,d)=>{if(!e.active)simulation.alphaTarget(0.3).restart();d.fx=d.x;d.fy=d.y;}).on("drag",(e,d)=>{d.fx=e.x;d.fy=e.y;}).on("end",(e,d)=>{if(!e.active)simulation.alphaTarget(0);d.fx=null;d.fy=null;}));
 
-            // 繪製節點群組
-            const node = g.append("g")
-                .selectAll("g")
-                .data(nodes)
-                .join("g")
-                .attr("class", "node")
-                .call(d3.drag()
-                    .on("start", dragstarted)
-                    .on("drag", dragged)
-                    .on("end", dragended));
+            node.append("circle").attr("r", 22).attr("fill", d => d.gender === 'M' ? '#4A90E2' : '#F5A623');
+            node.append("text").attr("dy", 38).attr("text-anchor", "middle").text(d => d.name);
 
-            // 節點圓圈
-            node.append("circle")
-                .attr("r", 25)
-                .attr("fill", d => d.gender === 'M' ? '#4A90E2' : '#F5A623') // 藍男橘女
-                .attr("stroke", "#1a1a1a");
-
-            // 節點文字 (姓名)
-            node.append("text")
-                .attr("dy", 40)
-                .attr("text-anchor", "middle")
-                .text(d => d.name);
-
-            // --- 互動事件綁定 ---
-
-            // 1. 點擊事件：鎖定 + 計算稱謂 + 開啟側邊欄
-            node.on("click", (event, d) => {
-                event.stopPropagation(); // 防止觸發背景點擊
-                
-                // 設定當前中心
+            node.on("click", (e, d) => {
+                e.stopPropagation();
                 currentCenterId = d.id;
-                
-                // 更新視覺狀態
-                d3.selectAll(".node").classed("selected", node => node.id === currentCenterId);
-
-                // 預計算所有人的稱謂 (存入 tempRelationship 屬性)
+                d3.selectAll(".node").classed("selected", n => n.id === d.id);
                 const nodeMap = new Map(allNodes.map(n => [n.id, n]));
-                allNodes.forEach(otherNode => {
-                    otherNode.tempRelationship = calculateKinship(d, otherNode, nodeMap);
-                });
-
-                // 開啟側邊欄
+                allNodes.forEach(target => { target.tempRel = calculateKinship(d, target, nodeMap); });
                 openSidebar(d);
             });
 
-            // 2. 懸停事件：顯示 Tooltip
-            node.on("mouseenter", (event, d) => {
-                let text = d.name;
-                // 如果有鎖定中心點，顯示「他是我的誰」
-                if (currentCenterId && d.tempRelationship) {
-                    text += ` (${d.tempRelationship})`;
-                }
-                showTooltip(event, text);
-            })
-            .on("mousemove", moveTooltip)
-            .on("mouseleave", hideTooltip);
+            node.on("mouseenter", (e, d) => {
+                let txt = d.name + (currentCenterId && d.tempRel ? ` (${d.tempRel})` : "");
+                const tip = d3.select("#tooltip");
+                tip.style("opacity", 1).text(txt).style("left", e.pageX+"px").style("top", (e.pageY-30)+"px");
+            }).on("mouseleave", () => d3.select("#tooltip").style("opacity", 0));
 
-            // 背景點擊：重置
-            svg.on("click", () => {
-                currentCenterId = null;
-                d3.selectAll(".node").classed("selected", false);
-                closeSidebar();
-                // 清除暫存稱謂
-                allNodes.forEach(n => n.tempRelationship = null);
-            });
-
-            // 每一幀更新位置
             simulation.on("tick", () => {
-                link
-                    .attr("x1", d => d.source.x)
-                    .attr("y1", d => d.source.y)
-                    .attr("x2", d => d.target.x)
-                    .attr("y2", d => d.target.y);
-
-                node
-                    .attr("transform", d => `translate(${d.x},${d.y})`);
+                link.attr("x1", d => d.source.x).attr("y1", d => d.source.y).attr("x2", d => d.target.x).attr("y2", d => d.target.y);
+                node.attr("transform", d => `translate(${d.x},${d.y})`);
             });
         }
 
-        // --- 拖曳控制 ---
-        function dragstarted(event, d) {
-            if (!event.active) simulation.alphaTarget(0.3).restart();
-            d.fx = d.x; d.fy = d.y;
-        }
-        function dragged(event, d) {
-            d.fx = event.x; d.fy = event.y;
-        }
-        function dragended(event, d) {
-            if (!event.active) simulation.alphaTarget(0);
-            d.fx = null; d.fy = null;
-        }
-
-        // --- UI 控制函式 ---
-        
         function openSidebar(d) {
-            const sb = document.getElementById("sidebar");
             document.getElementById("sb-name").textContent = d.name;
             document.getElementById("sb-gender").textContent = d.gender === 'M' ? '男' : '女';
-            document.getElementById("sb-bio").textContent = d.bio || "暫無簡介";
-            
-            // 處理日期顯示
-            const dateStr = d.birthDate ? d.birthDate.getFullYear() : "未知";
-            document.getElementById("sb-dates").textContent = `出生年份: ${dateStr}`;
-
-            // 處理照片
-            const img = document.getElementById("sb-photo");
-            img.src = d.photo || ""; // 若為空，會觸發 onerror 使用 placeholder
-
-            sb.classList.add("active");
+            document.getElementById("sb-bio").textContent = d.bio || "暫無資料";
+            document.getElementById("sb-photo").src = d.photo || "";
+            document.getElementById("sidebar").classList.add("active");
         }
+        function closeSidebar() { document.getElementById("sidebar").classList.remove("active"); }
 
-        function closeSidebar() {
-            document.getElementById("sidebar").classList.remove("active");
-        }
-
-        const tooltip = document.getElementById("tooltip");
-        
-        function showTooltip(event, text) {
-            tooltip.style.opacity = 1;
-            tooltip.textContent = text;
-            updateTooltipPos(event);
-        }
-
-        function moveTooltip(event) {
-            updateTooltipPos(event);
-        }
-
-        function updateTooltipPos(event) {
-            // 邊界檢查與位置修正
-            let x = event.pageX;
-            let y = event.pageY - 40; // 預設在上方
-            
-            // 如果太靠右，改為靠左顯示
-            if (x > window.innerWidth - 100) x -= 100;
-            // 如果太靠上，改為下方顯示
-            if (y < 20) y = event.pageY + 30;
-
-            tooltip.style.left = x + "px";
-            tooltip.style.top = y + "px";
-        }
-
-        function hideTooltip() {
-            tooltip.style.opacity = 0;
-        }
-
-        // 啟動！
         loadData();
-
     </script>
 </body>
 </html>
-
