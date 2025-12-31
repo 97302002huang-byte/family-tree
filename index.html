@@ -3,18 +3,19 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>家族數位族譜 - API 全自動版</title>
+    <title>家族數位族譜 - 正式版</title>
     <script src="https://d3js.org/d3.v7.min.js"></script>
     <style>
         body { margin: 0; overflow: hidden; background: #1a1a1a; font-family: "Microsoft JhengHei", sans-serif; }
         
-        /* 狀態列：簡潔專業 */
+        /* 狀態列 */
         #status-bar { 
             position: fixed; top: 20px; left: 50%; transform: translateX(-50%);
-            background: rgba(0, 0, 0, 0.8); color: #00ff9d; 
+            background: rgba(0, 0, 0, 0.85); color: #00ff9d; 
             padding: 10px 25px; border-radius: 50px; border: 1px solid #333; 
             font-size: 14px; z-index: 1000; transition: opacity 1s;
             box-shadow: 0 5px 15px rgba(0,0,0,0.5); pointer-events: none;
+            display: flex; align-items: center; gap: 10px;
         }
 
         #canvas { width: 100vw; height: 100vh; cursor: grab; }
@@ -31,7 +32,9 @@
 </head>
 <body>
 
-    <div id="status-bar">正在連線至 Google 家族資料庫...</div>
+    <div id="status-bar">
+        <span id="status-text">正在連線至 Google 家族資料庫...</span>
+    </div>
     <div id="canvas"></div>
 
 <script>
@@ -41,15 +44,16 @@
     const width = window.innerWidth;
     const height = window.innerHeight;
     
-    // 您的專屬 Google Apps Script API 網址 (神聖鑰匙)
-    // 加上 ?t=時間戳記 確保每次都抓到最新資料，不被快取
-    const API_URL = 'https://script.google.com/macros/s/AKfycbwUB5HWjESzhaOueAR5a00rfBepf8pGPvpZP2wC9m7f25jXtz9BG1x97DRyEdq-v8bpxA/exec' + '?t=' + Date.now();
+    // *** 您的專屬 API 網址 (已更新為最新版) ***
+    const API_URL = 'https://script.google.com/macros/s/AKfycbwD2e8F4XspYlYXZjxac3mhffo0QrI3DQ9YVnAt3iC_qxPdli20gz1wur_7o7i0UCOBtQ/exec' + '?t=' + Date.now();
 
     // 狀態更新函式
-    const statusEl = document.getElementById("status-bar");
+    const statusText = document.getElementById("status-text");
+    const statusBar = document.getElementById("status-bar");
+    
     function setStatus(msg, isError = false) {
-        statusEl.innerText = msg;
-        statusEl.style.color = isError ? "#ff5252" : "#00ff9d";
+        statusText.innerText = msg;
+        statusText.style.color = isError ? "#ff5252" : "#00ff9d";
         console.log(`[System] ${msg}`);
     }
 
@@ -67,21 +71,27 @@
     // ==========================================
     // 3. 資料串接 (API Integration)
     // ==========================================
-    setStatus("正在呼叫 Google API...");
+    setStatus("正在呼叫 Google API (取得最新資料)...");
 
     // 使用 d3.json 直接讀取您的 API 回傳的 JSON 格式
     d3.json(API_URL).then(raw_data => {
         
-        // 如果 API 回傳空陣列或錯誤
-        if (!raw_data || raw_data.length === 0) {
-            throw new Error("API 回傳了空資料，請檢查 Google Sheet 內容");
+        // 檢查回傳資料
+        if (!raw_data) {
+            throw new Error("API 回傳為空");
+        }
+        
+        // 針對 Google Apps Script有時候回傳格式差異的相容性處理
+        const data = Array.isArray(raw_data) ? raw_data : (raw_data.data || []);
+
+        if (data.length === 0) {
+            throw new Error("讀取成功但沒有資料，請檢查 Google Sheet 內容");
         }
 
-        setStatus(`連線成功！取得 ${raw_data.length} 位成員資料，正在建構族譜...`);
+        setStatus(`連線成功！取得 ${data.length} 位成員，正在建構畫面...`);
 
-        // --- A. 資料標準化 (Normalization) ---
-        // 因為 API 已經幫我們轉成 JSON，這裡處理起來比 CSV 更乾淨
-        const nodes = raw_data.map(d => ({
+        // --- A. 資料標準化 ---
+        const nodes = data.map(d => ({
             id: d['ID'],
             name: d['姓名 (中)'] || d['姓名 (英)'] || 'Unknown',
             gender: d['性別'] === 'F' ? 'F' : 'M',
@@ -89,7 +99,7 @@
             motherId: d['母親ID'] || null,
             spouseId: d['配偶ID'] || null,
             level: null // 待計算
-        })).filter(n => n.id); // 確保有 ID
+        })).filter(n => n.id); 
 
         const nodeMap = new Map(nodes.map(n => [n.id, n]));
 
@@ -114,7 +124,7 @@
         // 計算每個人是第幾代
         nodes.forEach(n => calculateLevel(n.id));
         
-        // 配偶校正 (讓沒父母資料的配偶跟另一半同一排)
+        // 配偶校正
         nodes.forEach(n => {
             if (n.level === 0 && n.spouseId && nodeMap.has(n.spouseId)) {
                 const spouse = nodeMap.get(n.spouseId);
@@ -132,14 +142,13 @@
             }
         });
 
-        // --- D. 物理引擎啟動 (Physics Engine) ---
+        // --- D. 物理引擎啟動 ---
         const simulation = d3.forceSimulation(nodes)
             .force("link", d3.forceLink(links).id(d => d.id).distance(d => d.type === 'spouse' ? 60 : 100))
             .force("charge", d3.forceManyBody().strength(-600))
             .force("collide", d3.forceCollide().radius(35))
             .force("center", d3.forceX(width / 2).strength(0.08))
-            // 關鍵：重力分層
-            .force("y", d3.forceY(d => (d.level * 150) + 100).strength(2.5));
+            .force("y", d3.forceY(d => (d.level * 150) + 100).strength(2.5)); // 重力分層
 
         // --- E. 繪製畫面 ---
         const link = container.append("g").selectAll(".link")
@@ -180,8 +189,8 @@
             d.fx = null; d.fy = null;
         }
 
-        setStatus(`✅ 族譜建構完成 | 成員：${nodes.length} 人`);
-        setTimeout(() => { statusEl.style.opacity = 0; }, 5000); // 5秒後隱藏狀態列
+        setStatus(`✅ 系統就緒 | 成員：${nodes.length} 人`);
+        setTimeout(() => { statusBar.style.opacity = 0; }, 5000); // 5秒後隱藏狀態列
 
     }).catch(error => {
         console.error(error);
