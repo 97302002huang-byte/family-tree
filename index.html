@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>家族數位族譜 V3.1 - JSON API 優化版</title>
+    <title>家族數位族譜 V3.2 - 稱謂強化版</title>
     <script src="https://d3js.org/d3.v7.min.js"></script>
     <style>
         /* --- 基礎樣式 --- */
@@ -46,7 +46,7 @@
             position: absolute; background: rgba(0, 0, 0, 0.9); border: 1px solid #FFD700;
             color: #FFD700; padding: 8px 12px; border-radius: 6px;
             font-size: 14px; pointer-events: none; opacity: 0;
-            transform: translate(-50%, -150%); transition: opacity 0.2s; z-index: 3000;
+            transform: translate(-50%, -150%); transition: opacity 0.1s; z-index: 3000;
             white-space: nowrap; box-shadow: 0 4px 10px rgba(0,0,0,0.5);
         }
     </style>
@@ -67,8 +67,8 @@
         </div>
         <h2 id="sb-name"></h2>
         <div id="sb-dates"></div>
-        <div class="sb-field"><span class="sb-label">性別</span><span id="sb-gender"></span></div>
-        <div class="sb-field"><span class="sb-label">個人簡介</span><div id="sb-bio"></div></div>
+        <div class="sb-field"><span class="sb-label">性別</span><span id="sb-gender" class="sb-value"></span></div>
+        <div class="sb-field"><span class="sb-label">個人簡介</span><div id="sb-bio" class="sb-value"></div></div>
     </div>
 
     <svg id="canvas"></svg>
@@ -105,16 +105,13 @@
 
         async function loadData() {
             try {
-                updateStatus("正在從 API 獲取資料...");
-                // 💡 改用 fetch 直接獲取 JSON 資料，而非 d3.csv
+                updateStatus("同步雲端資料中...");
                 const response = await fetch(CSV_URL);
-                if (!response.ok) throw new Error("網路請求失敗");
+                if (!response.ok) throw new Error("API 連線失敗");
                 
                 const rawData = await response.json();
-                if (!rawData || rawData.length === 0) throw new Error("讀取到的資料為空");
+                if (!rawData || rawData.length === 0) throw new Error("資料庫內容為空");
 
-                updateStatus("資料載入成功，正在建構網路...");
-                
                 const nodeMap = new Map();
                 rawData.forEach(d => {
                     if (!d['ID']) return;
@@ -135,7 +132,6 @@
                     nodeMap.set(node.id, node);
                 });
 
-                // 建立親子與手足連結
                 nodeMap.forEach(node => {
                     if (node.fatherId && nodeMap.has(node.fatherId)) nodeMap.get(node.fatherId).children.push(node);
                     if (node.motherId && nodeMap.has(node.motherId)) nodeMap.get(node.motherId).children.push(node);
@@ -151,7 +147,7 @@
                     node.siblings.sort((a, b) => (a.birthDate && b.birthDate) ? a.birthDate - b.birthDate : a.id.localeCompare(b.id));
                 });
 
-                // 計算分層 (Level)
+                // 層級計算
                 for (let i = 0; i < 10; i++) {
                     nodeMap.forEach(node => {
                         if (node.fatherId && nodeMap.has(node.fatherId)) node.level = Math.max(node.level, nodeMap.get(node.fatherId).level + 1);
@@ -168,41 +164,61 @@
                 });
 
                 initSimulation(allNodes, links);
-                updateStatus(`成功連線 | 成員: ${allNodes.length}`, 'success');
+                updateStatus(`族譜就緒 | 載入 ${allNodes.length} 位成員`, 'success');
 
             } catch (error) {
                 console.error(error);
-                updateStatus(`發生錯誤: ${error.message}`, 'error');
+                updateStatus(`錯誤: ${error.message}`, 'error');
             }
         }
 
+        // --- 稱謂演算法強化版 ---
         function calculateKinship(center, target, nodeMap) {
             if (center.id === target.id) return "本人";
             let queue = [{ node: center, path: [] }];
             let visited = new Set([center.id]);
+            
             while (queue.length > 0) {
                 let curr = queue.shift();
-                if (curr.path.length > 5) continue;
+                if (curr.path.length > 5) continue; 
+
                 if (curr.node.id === target.id) {
                     const ps = curr.path.join('-');
                     const dict = {
+                        // 一等親
                         'F':'父親','M':'母親','S':'兒子','D':'女兒','H':'丈夫','W':'妻子',
                         'XB':'哥哥','YB':'弟弟','XS':'姊姊','YS':'妹妹','Bro':'兄弟','Sis':'姊妹',
-                        'F-F':'祖父','F-M':'祖母','M-F':'外祖父','M-M':'外祖母','F-XB':'伯父','F-YB':'叔叔'
+                        // 二等親 (孫輩/祖輩)
+                        'F-F':'祖父','F-M':'祖母','M-F':'外祖父','M-M':'外祖母',
+                        'S-S':'孫子','S-D':'孫女','D-S':'外孫','D-D':'外孫女',
+                        'F-XB':'伯父','F-YB':'叔叔','F-XS':'姑媽','F-YS':'姑姐',
+                        'M-XB':'舅舅','M-XS':'阿姨'
                     };
                     if (dict[ps]) return dict[ps];
+                    // 模糊匹配堂表親
                     if (ps.match(/^F-(XB|YB|Bro)-(S|D)$/)) return "堂" + (target.gender==='M'?'兄弟':'姊妹');
+                    if (ps.match(/^(F-XS|F-YS|F-Sis|M)-(S|D)$/)) return "表" + (target.gender==='M'?'兄弟':'姊妹');
                     return "親戚";
                 }
+
                 const n = curr.node;
+                // 向上尋找
                 if (n.fatherId && nodeMap.has(n.fatherId) && !visited.has(n.fatherId)) { visited.add(n.fatherId); queue.push({node:nodeMap.get(n.fatherId), path:[...curr.path,'F']}); }
                 if (n.motherId && nodeMap.has(n.motherId) && !visited.has(n.motherId)) { visited.add(n.motherId); queue.push({node:nodeMap.get(n.motherId), path:[...curr.path,'M']}); }
+                // 向下尋找
                 n.children.forEach(c => { if(!visited.has(c.id)){ visited.add(c.id); queue.push({node:c, path:[...curr.path, c.gender==='M'?'S':'D']}); }});
+                // 配偶
                 if (n.spouseId && nodeMap.has(n.spouseId) && !visited.has(n.spouseId)) { visited.add(n.spouseId); queue.push({node:nodeMap.get(n.spouseId), path:[...curr.path, nodeMap.get(n.spouseId).gender==='M'?'H':'W']}); }
+                // 手足
                 n.siblings.forEach(s => { 
                     if(!visited.has(s.id)){ 
                         visited.add(s.id); 
-                        let tag = s.gender==='M'?(n.birthDate>s.birthDate?'XB':'YB'):(n.birthDate>s.birthDate?'XS':'YS');
+                        let tag;
+                        if (n.birthDate && s.birthDate) {
+                            tag = s.gender==='M'?(n.birthDate > s.birthDate ? 'XB':'YB'):(n.birthDate > s.birthDate ? 'XS':'YS');
+                        } else {
+                            tag = s.gender==='M'?'Bro':'Sis';
+                        }
                         queue.push({node:s, path:[...curr.path, tag]});
                     }
                 });
@@ -212,17 +228,17 @@
 
         function initSimulation(nodes, links) {
             simulation = d3.forceSimulation(nodes)
-                .force("link", d3.forceLink(links).id(d => d.id).distance(80))
-                .force("charge", d3.forceManyBody().strength(-300))
+                .force("link", d3.forceLink(links).id(d => d.id).distance(100))
+                .force("charge", d3.forceManyBody().strength(-400))
                 .force("center", d3.forceCenter(0, 0))
-                .force("y", d3.forceY(d => d.level * 150).strength(0.5));
+                .force("y", d3.forceY(d => d.level * 160).strength(0.6));
 
-            const link = g.append("g").selectAll("line").data(links).join("line").attr("stroke", "#444").attr("stroke-width", 1.5);
+            const link = g.append("g").selectAll("line").data(links).join("line").attr("stroke", "#444").attr("stroke-width", 1.5).attr("opacity", 0.6);
             const node = g.append("g").selectAll("g").data(nodes).join("g").attr("class", "node")
                 .call(d3.drag().on("start", (e,d)=>{if(!e.active)simulation.alphaTarget(0.3).restart();d.fx=d.x;d.fy=d.y;}).on("drag",(e,d)=>{d.fx=e.x;d.fy=e.y;}).on("end",(e,d)=>{if(!e.active)simulation.alphaTarget(0);d.fx=null;d.fy=null;}));
 
-            node.append("circle").attr("r", 22).attr("fill", d => d.gender === 'M' ? '#4A90E2' : '#F5A623');
-            node.append("text").attr("dy", 38).attr("text-anchor", "middle").text(d => d.name);
+            node.append("circle").attr("r", 25).attr("fill", d => d.gender === 'M' ? '#4A90E2' : '#F5A623');
+            node.append("text").attr("dy", 42).attr("text-anchor", "middle").text(d => d.name);
 
             node.on("click", (e, d) => {
                 e.stopPropagation();
@@ -237,7 +253,8 @@
                 let txt = d.name + (currentCenterId && d.tempRel ? ` (${d.tempRel})` : "");
                 const tip = d3.select("#tooltip");
                 tip.style("opacity", 1).text(txt).style("left", e.pageX+"px").style("top", (e.pageY-30)+"px");
-            }).on("mouseleave", () => d3.select("#tooltip").style("opacity", 0));
+            }).on("mousemove", (e) => d3.select("#tooltip").style("left", e.pageX+"px").style("top", (e.pageY-30)+"px"))
+            .on("mouseleave", () => d3.select("#tooltip").style("opacity", 0));
 
             simulation.on("tick", () => {
                 link.attr("x1", d => d.source.x).attr("y1", d => d.source.y).attr("x2", d => d.target.x).attr("y2", d => d.target.y);
@@ -248,11 +265,15 @@
         function openSidebar(d) {
             document.getElementById("sb-name").textContent = d.name;
             document.getElementById("sb-gender").textContent = d.gender === 'M' ? '男' : '女';
-            document.getElementById("sb-bio").textContent = d.bio || "暫無資料";
+            document.getElementById("sb-bio").textContent = d.bio || "暫無簡介資料";
             document.getElementById("sb-photo").src = d.photo || "";
             document.getElementById("sidebar").classList.add("active");
         }
-        function closeSidebar() { document.getElementById("sidebar").classList.remove("active"); }
+        function closeSidebar() { 
+            document.getElementById("sidebar").classList.remove("active"); 
+            currentCenterId = null;
+            d3.selectAll(".node").classed("selected", false);
+        }
 
         loadData();
     </script>
