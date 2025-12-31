@@ -3,77 +3,59 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>家族數位族譜 - 雙模組強韌版</title>
+    <title>家族數位族譜 - API 全自動版</title>
     <script src="https://d3js.org/d3.v7.min.js"></script>
     <style>
-        body { margin: 0; overflow: hidden; background: #111; font-family: "Microsoft JhengHei", sans-serif; }
+        body { margin: 0; overflow: hidden; background: #1a1a1a; font-family: "Microsoft JhengHei", sans-serif; }
         
-        /* 控制面板 */
-        #control-panel {
-            position: fixed; top: 10px; left: 10px; z-index: 1000;
-            background: rgba(0,0,0,0.8); padding: 15px; border-radius: 8px; border: 1px solid #444;
-            color: #eee; box-shadow: 0 4px 10px rgba(0,0,0,0.5);
-            display: flex; flex-direction: column; gap: 10px;
+        /* 狀態列：簡潔專業 */
+        #status-bar { 
+            position: fixed; top: 20px; left: 50%; transform: translateX(-50%);
+            background: rgba(0, 0, 0, 0.8); color: #00ff9d; 
+            padding: 10px 25px; border-radius: 50px; border: 1px solid #333; 
+            font-size: 14px; z-index: 1000; transition: opacity 1s;
+            box-shadow: 0 5px 15px rgba(0,0,0,0.5); pointer-events: none;
         }
 
-        /* 按鈕樣式 */
-        .btn-upload {
-            background: #2196F3; color: white; border: none; padding: 8px 12px;
-            cursor: pointer; border-radius: 4px; font-weight: bold; font-size: 14px;
-        }
-        .btn-upload:hover { background: #1976D2; }
-        
-        /* 隱藏原本醜醜的 input */
-        #csv-input { display: none; }
-
-        /* 狀態文字 */
-        #status-text { font-size: 13px; color: #00ff9d; font-family: monospace; }
-        .error { color: #ff5252 !important; }
-
-        /* 畫布 */
         #canvas { width: 100vw; height: 100vh; cursor: grab; }
         #canvas:active { cursor: grabbing; }
 
+        /* 節點樣式 */
         .node circle { stroke: #fff; stroke-width: 2px; transition: all 0.3s; }
-        .node text { font-size: 13px; fill: #eee; text-shadow: 2px 2px 4px #000; pointer-events: none; font-weight: bold; }
+        .node:hover circle { stroke: #ffd700; stroke-width: 4px; r: 25px; }
+        .node text { font-size: 13px; fill: #eee; pointer-events: none; text-shadow: 2px 2px 4px #000; font-weight: bold; }
+        
+        /* 連線樣式 */
         .link { stroke-opacity: 0.6; stroke-width: 1.5px; }
     </style>
 </head>
 <body>
 
-    <div id="control-panel">
-        <div id="status-text">系統待命中...</div>
-        
-        <label for="csv-input" class="btn-upload">📂 選擇 CSV 檔案 (手動模式)</label>
-        <input type="file" id="csv-input" accept=".csv">
-        
-        <div style="font-size: 11px; color: #888; margin-top:5px;">
-            如果自動連線失敗，請下載 CSV 並使用上方按鈕直接讀取。
-        </div>
-    </div>
-    
+    <div id="status-bar">正在連線至 Google 家族資料庫...</div>
     <div id="canvas"></div>
 
 <script>
     // ==========================================
-    // 1. 系統設定
+    // 1. 核心設定
     // ==========================================
     const width = window.innerWidth;
     const height = window.innerHeight;
-    const GOOGLE_CSV_URL = 'https://docs.google.com/spreadsheets/d/e/2PACX-1vSV9UA8RtEJ3d2_Tb9EsIQi_BW_O4gE3TJqU0uE-c_7dFuwETvY6MTAg86K3Z43G3Oq9wJ2T-Wc58WJ/pub?output=csv';
     
-    // 更換為 corsproxy.io (通常比 allorigins 更快更穩)
-    const PROXY_URL = `https://corsproxy.io/?${encodeURIComponent(GOOGLE_CSV_URL + '&t=' + Date.now())}`;
+    // 您的專屬 Google Apps Script API 網址 (神聖鑰匙)
+    // 加上 ?t=時間戳記 確保每次都抓到最新資料，不被快取
+    const API_URL = 'https://script.google.com/macros/s/AKfycbwUB5HWjESzhaOueAR5a00rfBepf8pGPvpZP2wC9m7f25jXtz9BG1x97DRyEdq-v8bpxA/exec' + '?t=' + Date.now();
 
-    // 狀態顯示器
-    const statusEl = document.getElementById("status-text");
+    // 狀態更新函式
+    const statusEl = document.getElementById("status-bar");
     function setStatus(msg, isError = false) {
-        statusEl.innerText = `> ${msg}`;
-        statusEl.className = isError ? "error" : "";
+        statusEl.innerText = msg;
+        statusEl.style.color = isError ? "#ff5252" : "#00ff9d";
         console.log(`[System] ${msg}`);
     }
 
-    // 初始化畫布
+    // ==========================================
+    // 2. 初始化畫布
+    // ==========================================
     const svg = d3.select("#canvas").append("svg")
         .attr("width", width)
         .attr("height", height)
@@ -83,78 +65,56 @@
     const container = svg.append("g");
 
     // ==========================================
-    // 2. 模式 A: 自動網路連線 (Auto Fetch)
+    // 3. 資料串接 (API Integration)
     // ==========================================
-    setStatus("嘗試自動連線 (Proxy Mode)...");
+    setStatus("正在呼叫 Google API...");
 
-    d3.csv(PROXY_URL).then(data => {
-        setStatus(`自動連線成功！讀取 ${data.length} 人`);
-        renderTree(data);
-    }).catch(err => {
-        console.error(err);
-        setStatus("自動連線失敗 (請改用手動按鈕)", true);
-    });
-
-    // ==========================================
-    // 3. 模式 B: 手動檔案讀取 (Manual Mode)
-    // ==========================================
-    document.getElementById('csv-input').addEventListener('change', function(e) {
-        const file = e.target.files[0];
-        if (!file) return;
-
-        setStatus(`正在讀取檔案: ${file.name}...`);
+    // 使用 d3.json 直接讀取您的 API 回傳的 JSON 格式
+    d3.json(API_URL).then(raw_data => {
         
-        const reader = new FileReader();
-        reader.onload = function(event) {
-            const csvText = event.target.result;
-            const data = d3.csvParse(csvText); // 解析 CSV
-            setStatus(`手動讀取成功！共 ${data.length} 人`);
-            
-            // 清除舊圖
-            container.selectAll("*").remove();
-            renderTree(data);
-        };
-        reader.readAsText(file);
-    });
+        // 如果 API 回傳空陣列或錯誤
+        if (!raw_data || raw_data.length === 0) {
+            throw new Error("API 回傳了空資料，請檢查 Google Sheet 內容");
+        }
 
-    // ==========================================
-    // 4. 共用渲染引擎 (Render Engine)
-    // ==========================================
-    function renderTree(raw_data) {
-        // --- 資料清洗 ---
-        const nodes = raw_data.map(d => {
-            const cleanD = {};
-            for (let key in d) cleanD[key.trim()] = d[key] ? d[key].trim() : "";
-            if (!cleanD['ID']) return null;
-            return {
-                id: cleanD['ID'],
-                name: cleanD['姓名 (中)'] || cleanD['姓名 (英)'] || cleanD['ID'],
-                gender: cleanD['性別'] === 'F' ? 'F' : 'M',
-                fatherId: cleanD['父親ID'] || null,
-                motherId: cleanD['母親ID'] || null,
-                spouseId: cleanD['配偶ID'] || null,
-                level: null 
-            };
-        }).filter(n => n);
+        setStatus(`連線成功！取得 ${raw_data.length} 位成員資料，正在建構族譜...`);
+
+        // --- A. 資料標準化 (Normalization) ---
+        // 因為 API 已經幫我們轉成 JSON，這裡處理起來比 CSV 更乾淨
+        const nodes = raw_data.map(d => ({
+            id: d['ID'],
+            name: d['姓名 (中)'] || d['姓名 (英)'] || 'Unknown',
+            gender: d['性別'] === 'F' ? 'F' : 'M',
+            fatherId: d['父親ID'] || null,
+            motherId: d['母親ID'] || null,
+            spouseId: d['配偶ID'] || null,
+            level: null // 待計算
+        })).filter(n => n.id); // 確保有 ID
 
         const nodeMap = new Map(nodes.map(n => [n.id, n]));
 
-        // --- 遞迴計算輩分 ---
+        // --- B. 演算法：世代重力計算 (Level Calculation) ---
         function calculateLevel(nodeId, visited = new Set()) {
             if (!nodeId || !nodeMap.has(nodeId)) return 0;
             if (visited.has(nodeId)) return 0;
+            
             const node = nodeMap.get(nodeId);
             if (node.level !== null) return node.level;
+
             visited.add(nodeId);
+
             let fLvl = -1, mLvl = -1;
             if (node.fatherId) fLvl = calculateLevel(node.fatherId, new Set(visited));
             if (node.motherId) mLvl = calculateLevel(node.motherId, new Set(visited));
+
             node.level = Math.max(fLvl, mLvl) + 1;
             return node.level;
         }
+
+        // 計算每個人是第幾代
         nodes.forEach(n => calculateLevel(n.id));
         
-        // 配偶校正
+        // 配偶校正 (讓沒父母資料的配偶跟另一半同一排)
         nodes.forEach(n => {
             if (n.level === 0 && n.spouseId && nodeMap.has(n.spouseId)) {
                 const spouse = nodeMap.get(n.spouseId);
@@ -162,7 +122,7 @@
             }
         });
 
-        // --- 建立連結 ---
+        // --- C. 建立連結 (Relationships) ---
         const links = [];
         nodes.forEach(n => {
             if (n.fatherId && nodeMap.has(n.fatherId)) links.push({ source: n.fatherId, target: n.id, type: 'parent' });
@@ -172,25 +132,29 @@
             }
         });
 
-        // --- 物理模擬 ---
+        // --- D. 物理引擎啟動 (Physics Engine) ---
         const simulation = d3.forceSimulation(nodes)
-            .force("link", d3.forceLink(links).id(d => d.id).distance(d => d.type === 'spouse' ? 50 : 100))
-            .force("charge", d3.forceManyBody().strength(-500))
+            .force("link", d3.forceLink(links).id(d => d.id).distance(d => d.type === 'spouse' ? 60 : 100))
+            .force("charge", d3.forceManyBody().strength(-600))
             .force("collide", d3.forceCollide().radius(35))
             .force("center", d3.forceX(width / 2).strength(0.08))
+            // 關鍵：重力分層
             .force("y", d3.forceY(d => (d.level * 150) + 100).strength(2.5));
 
-        // --- 繪圖 ---
+        // --- E. 繪製畫面 ---
         const link = container.append("g").selectAll(".link")
             .data(links).join("line")
             .attr("class", "link")
-            .attr("stroke", d => d.type === 'spouse' ? '#ff69b4' : '#888')
+            .attr("stroke", d => d.type === 'spouse' ? '#ff69b4' : '#666')
             .attr("stroke-dasharray", d => d.type === 'spouse' ? '5,5' : '0');
 
         const node = container.append("g").selectAll(".node")
             .data(nodes).join("g")
             .attr("class", "node")
-            .call(d3.drag().on("start", dragstarted).on("drag", dragged).on("end", dragended));
+            .call(d3.drag()
+                .on("start", dragstarted)
+                .on("drag", dragged)
+                .on("end", dragended));
 
         node.append("circle")
             .attr("r", 20)
@@ -205,6 +169,7 @@
             node.attr("transform", d => `translate(${d.x},${d.y})`);
         });
 
+        // 拖拽控制
         function dragstarted(event, d) {
             if (!event.active) simulation.alphaTarget(0.3).restart();
             d.fx = d.x; d.fy = d.y;
@@ -214,7 +179,14 @@
             if (!event.active) simulation.alphaTarget(0);
             d.fx = null; d.fy = null;
         }
-    }
+
+        setStatus(`✅ 族譜建構完成 | 成員：${nodes.length} 人`);
+        setTimeout(() => { statusEl.style.opacity = 0; }, 5000); // 5秒後隱藏狀態列
+
+    }).catch(error => {
+        console.error(error);
+        setStatus(`連線錯誤: ${error.message}`, true);
+    });
 </script>
 </body>
 </html>
