@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>家族數位族譜 V3.4 - 漢語稱謂全方位版</title>
+    <title>家族數位族譜 V3.5 - 多元家庭穩定版</title>
     <script src="https://d3js.org/d3.v7.min.js"></script>
     <style>
         body { margin: 0; overflow: hidden; background: #1a1a1a; font-family: "Microsoft JhengHei", sans-serif; }
@@ -55,7 +55,7 @@
     // ==========================================
     // ⚠️ 請務必在此替換您的 API 網址
     // ==========================================
-    const CSV_URL = 'https://script.google.com/macros/s/AKfycby1NXcpTUHm7wDk3_eH53kAVYBlieazThbzNudsLwLADRb1ysEaN6dhRp5rM9ZmyLyGlA/exec'; 
+    const CSV_URL = 'https://script.google.com/macros/s/AKfycbz4zEnWy42vCiIoaY-tQrdc3OTjoVzi3L3f2nN1Ib2IawXRY9ZC_Aob9AZDrZx8n5Ye/exec'; 
 
     const width = window.innerWidth, height = window.innerHeight;
     let allNodes = [], simulation, currentCenterId = null;
@@ -68,7 +68,7 @@
 
     async function loadData() {
         try {
-            updateStatus("同步雲端漢語稱謂庫...");
+            updateStatus("同步漢語稱謂與多元家庭模組...");
             const res = await fetch(CSV_URL);
             const data = await res.json();
             
@@ -92,6 +92,7 @@
                 if(n.母親ID && nodeMap.has(n.母親ID)) nodeMap.get(n.母親ID).children.push(n);
             });
 
+            // 分層邏輯
             for(let i=0; i<10; i++){
                 nodeMap.forEach(n => {
                     if(n.父親ID && nodeMap.has(n.父親ID)) n.level = Math.max(n.level, nodeMap.get(n.父親ID).level + 1);
@@ -99,21 +100,35 @@
                 });
             }
 
+            // 手足識別 (只要父母其中一方相同即視為手足)
             nodeMap.forEach(n => {
-                const parents = [n.父親ID, n.母親ID].filter(p => p && nodeMap.has(p));
-                parents.forEach(p => nodeMap.get(p).children.forEach(s => { if(s.id !== n.id && !n.siblings.includes(s)) n.siblings.push(s); }));
+                const parentIDs = [n.父親ID, n.母親ID].filter(id => id && nodeMap.has(id));
+                parentIDs.forEach(pid => {
+                    nodeMap.get(pid).children.forEach(sib => {
+                        if(sib.id !== n.id && !n.siblings.includes(sib)) n.siblings.push(sib);
+                    });
+                });
             });
 
             allNodes = Array.from(nodeMap.values());
             const links = [];
             allNodes.forEach(n => {
-                if(n.父親ID && nodeMap.has(n.父親ID)) links.push({source: n.父親ID, target: n.id});
-                if(n.母親ID && nodeMap.has(n.母親ID)) links.push({source: n.母親ID, target: n.id});
-                if(n.配偶ID && nodeMap.has(n.配偶ID) && n.id < n.配偶ID) links.push({source: n.id, target: n.配偶ID});
+                if(n.父親ID && nodeMap.has(n.父親ID)) links.push({source: n.父親ID, target: n.id, type: 'parent'});
+                if(n.母親ID && nodeMap.has(n.母親ID)) links.push({source: n.母親ID, target: n.id, type: 'parent'});
+                
+                // 支援複數配偶 (逗號分隔)
+                if(n.配偶ID) {
+                    const spouses = n.配偶ID.split(',').map(s => s.trim());
+                    spouses.forEach(sid => {
+                        if(nodeMap.has(sid) && n.id < sid) {
+                            links.push({source: n.id, target: sid, type: 'spouse'});
+                        }
+                    });
+                }
             });
 
             render(allNodes, links);
-            updateStatus(`族譜就緒 | 載入 ${allNodes.length} 位成員`, "success");
+            updateStatus(`族譜就緒 | 識別多元連結成功`, "success");
         } catch(e) { updateStatus("讀取失敗: " + e.message, "error"); }
     }
 
@@ -129,36 +144,43 @@
                 const dict = {
                     'F':'父親','M':'母親','S':'兒子','D':'女兒','H':'丈夫','W':'妻子',
                     'XB':'哥哥','YB':'弟弟','XS':'姊姊','YS':'妹妹','Bro':'兄弟','Sis':'姊妹',
-                    'F-F':'祖父','F-M':'祖母','M-F':'外祖父','M-M':'外祖母',
-                    'S-S':'孫子','S-D':'孫女','D-S':'外孫','D-D':'外孫女',
+                    'F-F':'祖父','F-M':'祖母','M-F':'外祖父','M-M':'外祖母','S-S':'孫子','S-D':'孫女','D-S':'外孫','D-D':'外孫女',
                     'F-XB':'伯父','F-YB':'叔叔','F-XS':'姑媽','F-YS':'姑姐','M-XB':'舅舅','M-XS':'阿姨',
-                    // 擴充：長輩姻親
                     'F-XB-W':'伯母','F-YB-W':'嬸嬸','F-F-XB-W':'嬸婆','F-F-YB-W':'嬸婆','M-F-Bro':'舅公','F-F-Bro':'伯叔公',
-                    // 擴充：晚輩姻親
-                    'S-W':'兒媳','D-H':'女婿',
-                    // 擴充：配偶長輩
-                    'W-F':'岳父','W-M':'岳母','H-F':'公公','H-M':'婆婆'
+                    'S-W':'兒媳','D-H':'女婿','W-F':'岳父','W-M':'岳母','H-F':'公公','H-M':'婆婆'
                 };
                 if (dict[ps]) return dict[ps];
-                
-                // 動態判定：同輩姻親 (嫂子/弟媳/姊夫/妹婿)
-                if (ps === 'XB-W') return "嫂子";
-                if (ps === 'YB-W') return "弟媳";
-                if (ps === 'Bro-W') return "妯娌/姻親";
-                if (ps === 'XS-H') return "姊夫";
-                if (ps === 'YS-H') return "妹婿";
-                if (ps === 'Sis-H') return "連襟/姻親";
 
-                // 模糊匹配堂表
-                if (ps.match(/^F-(XB|YB|Bro)-(S|D)$/)) return "堂" + (target.gender==='F'?'姊妹':'兄弟');
-                if (ps.match(/^(F-XS|F-YS|F-Sis|M)-(S|D)$/)) return "表" + (target.gender==='F'?'姊妹':'兄弟');
+                // 姑姑判定強化 (父親的手足且性別為女)
+                if (ps.match(/^F-(XS|YS|Sis)$/)) return "姑姑";
+
+                // 同父之親 (包含兩位姑姑的孩子互稱)
+                if (ps.match(/^F-(XB|YB|Bro|XS|YS|Sis)-(S|D)$/)) {
+                    // 如果共同父親是姑丈
+                    return "堂" + (target.gender==='F'?'姊妹':'兄弟');
+                }
+                
+                // 同母之親
+                if (ps.match(/^M-(XB|YB|Bro|XS|YS|Sis)-(S|D)$/)) return "表" + (target.gender==='F'?'姊妹':'兄弟');
+                
                 return "親戚";
             }
             const n = curr.node;
             if (n.父親ID && nodeMap.has(n.父親ID) && !visited.has(n.父親ID)) { visited.add(n.父親ID); queue.push({node:nodeMap.get(n.父親ID), path:[...curr.path,'F']}); }
             if (n.母親ID && nodeMap.has(n.母親ID) && !visited.has(n.母親ID)) { visited.add(n.母親ID); queue.push({node:nodeMap.get(n.母親ID), path:[...curr.path,'M']}); }
             n.children.forEach(c => { if(!visited.has(c.id)){ visited.add(c.id); queue.push({node:c, path:[...curr.path, c.gender==='F'?'D':'S']}); }});
-            if (n.配偶ID && nodeMap.has(n.配偶ID) && !visited.has(n.配偶ID)) { visited.add(n.配偶ID); queue.push({node:nodeMap.get(n.配偶ID), path:[...curr.path, nodeMap.get(n.配偶ID).gender==='F'?'W':'H']}); }
+            
+            // 處理配偶 (支援複數)
+            if (n.配偶ID) {
+                const spouses = n.配偶ID.split(',').map(s => s.trim());
+                spouses.forEach(sid => {
+                    if(nodeMap.has(sid) && !visited.has(sid)) {
+                        visited.add(sid);
+                        queue.push({node:nodeMap.get(sid), path:[...curr.path, nodeMap.get(sid).gender==='F'?'W':'H']});
+                    }
+                });
+            }
+
             n.siblings.forEach(s => { 
                 if(!visited.has(s.id)){ 
                     visited.add(s.id); 
@@ -172,12 +194,17 @@
 
     function render(nodes, links) {
         simulation = d3.forceSimulation(nodes)
-            .force("link", d3.forceLink(links).id(d => d.id).distance(120))
-            .force("charge", d3.forceManyBody().strength(-600))
-            .force("y", d3.forceY(d => d.level * 180).strength(0.6))
+            .force("link", d3.forceLink(links).id(d => d.id).distance(d => d.type === 'spouse' ? 80 : 130))
+            .force("charge", d3.forceManyBody().strength(-700))
+            .force("center", d3.forceCenter(0, 0))
+            .force("y", d3.forceY(d => d.level * 180).strength(0.7))
             .alphaDecay(0.06);
 
-        const link = g.append("g").selectAll("line").data(links).join("line").attr("stroke","#555").attr("stroke-width", 1.5);
+        const link = g.append("g").selectAll("line").data(links).join("line")
+            .attr("stroke", d => d.type === 'spouse' ? "#ff69b4" : "#555")
+            .attr("stroke-width", d => d.type === 'spouse' ? 2 : 1.5)
+            .attr("stroke-dasharray", d => d.type === 'spouse' ? "5,5" : "0");
+
         const node = g.append("g").selectAll("g").data(nodes).join("g").attr("class", "node").call(d3.drag().on("start", dragstarted).on("drag", dragged).on("end", dragended));
 
         node.append("circle").attr("r", 35).attr("fill", d => d['相片路徑'] ? `url(#img-${d.id})` : (d.gender === 'F' ? '#F5A623' : '#4A90E2')).style("stroke", d => d.gender === 'F' ? '#F5A623' : '#4A90E2');
@@ -208,7 +235,7 @@
     function openSidebar(d) {
         d3.select("#sb-name").text(d.name);
         d3.select("#sb-photo").attr("src", d['相片路徑'] || "");
-        d3.select("#sb-rel").text(d.tempRel ? "與您的關係： " + d.tempRel : "點擊其他成員查看關係");
+        d3.select("#sb-rel").text(d.tempRel ? "關係： " + d.tempRel : "點擊成員查看稱謂");
         d3.select("#sb-bio").text(d['個人簡介'] || "暫無簡介");
         d3.select("#sidebar").classed("active", true);
     }
