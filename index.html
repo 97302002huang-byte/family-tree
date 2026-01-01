@@ -3,321 +3,212 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>家族數位族譜 V4.0 - 國際化雙語版</title>
+    <title>家族數位族譜 V4.1 - 雙語對接版</title>
     <script src="https://d3js.org/d3.v7.min.js"></script>
     <style>
-        :root {
-            --primary-color: #00ff9d;
-            --bg-dark: #1a1a1a;
-            --sidebar-bg: rgba(30, 30, 30, 0.95);
-            --text-main: #ffffff;
-            --text-dim: #aaaaaa;
-        }
-        body { margin: 0; overflow: hidden; background: var(--bg-dark); font-family: "Segoe UI", "Microsoft JhengHei", sans-serif; }
+        :root { --primary: #00ff9d; --bg: #1a1a1a; --text: #ffffff; --dim: #aaaaaa; }
+        body { margin: 0; overflow: hidden; background: var(--bg); font-family: sans-serif; }
         
-        /* 語系切換按鈕 */
-        #lang-control {
-            position: fixed; top: 20px; right: 20px; z-index: 1001;
-            display: flex; gap: 5px; background: rgba(0,0,0,0.6); padding: 5px; border-radius: 8px;
-        }
-        .lang-btn {
-            padding: 8px 15px; border: none; border-radius: 5px; cursor: pointer;
-            background: transparent; color: var(--text-dim); transition: 0.3s;
-        }
-        .lang-btn.active { background: var(--primary-color); color: #000; font-weight: bold; }
-
-        #status-bar { 
-            position: fixed; top: 20px; left: 50%; transform: translateX(-50%);
-            background: rgba(0, 0, 0, 0.85); color: var(--primary-color); 
-            padding: 10px 25px; border-radius: 50px; border: 1px solid #333; 
-            font-size: 14px; z-index: 1000; display: flex; align-items: center; gap: 10px;
-        }
-
-        #canvas { width: 100vw; height: 100vh; cursor: grab; }
-        .node circle { stroke: #fff; stroke-width: 2px; transition: stroke 0.3s; cursor: pointer; }
-        .node.selected circle { stroke: var(--primary-color); stroke-width: 4px; }
+        /* UI 元件樣式 */
+        #lang-control { position: fixed; top: 20px; right: 20px; z-index: 1001; }
+        .lang-btn { padding: 8px 15px; cursor: pointer; background: #333; color: #fff; border: 1px solid #555; border-radius: 4px; }
+        .lang-btn.active { background: var(--primary); color: #000; font-weight: bold; }
+        #status-bar { position: fixed; top: 20px; left: 50%; transform: translateX(-50%); background: rgba(0,0,0,0.8); color: var(--primary); padding: 8px 20px; border-radius: 20px; z-index: 1000; font-size: 13px; }
         
-        /* 節點文字樣式 */
-        .node .main-name { fill: #fff; font-size: 14px; font-weight: bold; text-anchor: middle; }
-        .node .sub-name { fill: var(--text-dim); font-size: 10px; text-anchor: middle; }
-
-        .link { stroke: #555; stroke-opacity: 0.4; stroke-width: 1.5px; fill: none; }
+        /* 畫布與節點 */
+        #canvas { width: 100vw; height: 100vh; }
+        .link { stroke: #555; stroke-opacity: 0.4; fill: none; }
+        .node circle { stroke: #fff; stroke-width: 2px; cursor: pointer; }
+        .node.selected circle { stroke: var(--primary); stroke-width: 4px; }
+        .main-name { fill: #fff; font-size: 14px; font-weight: bold; text-anchor: middle; }
+        .sub-name { fill: var(--dim); font-size: 10px; text-anchor: middle; }
 
         /* 側邊欄 */
-        #sidebar {
-            position: fixed; right: -350px; top: 0; width: 320px; height: 100vh;
-            background: var(--sidebar-bg); border-left: 1px solid #444;
-            transition: 0.4s cubic-bezier(0.4, 0, 0.2, 1); z-index: 2000; padding: 25px;
-            color: white; box-shadow: -5px 0 15px rgba(0,0,0,0.5); overflow-y: auto;
-        }
+        #sidebar { position: fixed; right: -350px; top: 0; width: 300px; height: 100vh; background: rgba(30,30,30,0.95); padding: 25px; color: white; transition: 0.4s; z-index: 2000; border-left: 1px solid #444; }
         #sidebar.open { right: 0; }
-        .close-btn { cursor: pointer; float: right; font-size: 24px; color: var(--text-dim); }
-        #sb-photo { width: 120px; height: 120px; border-radius: 50%; border: 3px solid var(--primary-color); object-fit: cover; margin-bottom: 20px; }
-        .rel-tag { display: inline-block; padding: 4px 12px; background: #333; border-radius: 4px; color: var(--primary-color); font-size: 13px; margin-bottom: 15px; border: 1px solid var(--primary-color); }
-        
-        /* Tooltip */
-        #tooltip {
-            position: absolute; padding: 10px; background: rgba(0,0,0,0.8);
-            color: white; border-radius: 5px; pointer-events: none; opacity: 0; font-size: 12px; z-index: 3000;
-        }
+        #tooltip { position: absolute; padding: 10px; background: rgba(0,0,0,0.8); color: white; border-radius: 5px; pointer-events: none; opacity: 0; z-index: 3000; font-size: 12px; }
     </style>
 </head>
 <body>
 
     <div id="lang-control">
-        <button class="lang-btn active" onclick="setLang('ZH')">中文</button>
-        <button class="lang-btn" onclick="setLang('EN')">English</button>
+        <button id="btn-zh" class="lang-btn active" onclick="setLang('ZH')">中文</button>
+        <button id="btn-en" class="lang-btn" onclick="setLang('EN')">English</button>
     </div>
 
-    <div id="status-bar">
-        <span id="status-icon">⏳</span>
-        <span id="status-text">初始化系統中...</span>
-    </div>
-
+    <div id="status-bar"><span id="status-text">初始化中...</span></div>
     <div id="tooltip"></div>
 
     <div id="sidebar">
-        <span class="close-btn" onclick="closeSidebar()">×</span>
-        <img id="sb-photo" src="" alt="Portrait">
-        <h2 id="sb-name" style="margin-top:0"></h2>
-        <div id="sb-rel" class="rel-tag"></div>
-        <div style="color: #888; font-size: 12px; margin-bottom: 5px;" id="label-bio">個人簡介</div>
-        <p id="sb-bio" style="line-height: 1.6; color: #ccc;"></p>
+        <div onclick="closeSidebar()" style="cursor:pointer; float:right;">✕</div>
+        <img id="sb-photo" src="" style="width:100px; height:100px; border-radius:50%; object-fit:cover; border:2px solid var(--primary);">
+        <h2 id="sb-name"></h2>
+        <div id="sb-rel" style="color:var(--primary); margin:10px 0;"></div>
+        <p id="sb-bio" style="font-size:14px; color:#ccc;"></p>
     </div>
 
     <svg id="canvas"></svg>
 
 <script>
-    /** * V4.0 設定區 
-     * 請將 Google Apps Script 的 Web App URL 填入此處
-     */
-    const SCRIPT_URL = 'https://script.google.com/macros/s/AKfycbz4zEnWy42vCiIoaY-tQrdc3OTjoVzi3L3f2nN1Ib2IawXRY9ZC_Aob9AZDrZx8n5Ye/exec'; 
+    // 已為您填入正確的 SCRIPT_URL
+    const SCRIPT_URL = "https://script.google.com/macros/s/AKfycbz4zEnWy42vCiIoaY-tQrdc3OTjoVzi3L3f2nN1Ib2IawXRY9ZC_Aob9AZDrZx8n5Ye/exec";
     
     let currentLang = 'ZH';
-    let rawData = [];
     let nodes = [], links = [];
-    let simulation, svg, g;
-
-    // UI 字典
-    const i18n = {
-        ZH: { status: "系統就緒", bio: "個人簡介", emptyBio: "暫無簡介", relPrefix: "關係：", loading: "讀取中..." },
-        EN: { status: "System Ready", bio: "Biography", emptyBio: "No bio available.", relPrefix: "Relationship: ", loading: "Loading..." }
-    };
+    let svg, g, simulation;
 
     function setLang(lang) {
         currentLang = lang;
-        d3.selectAll(".lang-btn").classed("active", function() { return d3.select(this).text().includes(lang === 'ZH' ? "中文" : "English"); });
-        updateUI();
-        if (nodes.length > 0) render(); // 重新渲染文字
+        d3.selectAll(".lang-btn").classed("active", false);
+        d3.select(lang === 'ZH' ? "#btn-zh" : "#btn-en").classed("active", true);
+        render(); // 語系切換時重新渲染文字
     }
 
-    function updateUI() {
-        d3.select("#status-text").text(i18n[currentLang].status);
-        d3.select("#label-bio").text(i18n[currentLang].bio);
-    }
-
-    // 初始化 D3 畫布
+    // 1. 初始化 D3 畫布
     function initChart() {
         svg = d3.select("#canvas");
         g = svg.append("g");
-        const zoom = d3.zoom().scaleExtent([0.2, 3]).on("zoom", (e) => g.attr("transform", e.transform));
+        const zoom = d3.zoom().scaleExtent([0.1, 3]).on("zoom", (e) => g.attr("transform", e.transform));
         svg.call(zoom);
 
         simulation = d3.forceSimulation()
-            .force("link", d3.forceLink().id(d => d.id).distance(120))
-            .force("charge", d3.forceManyBody().strength(-800))
+            .force("link", d3.forceLink().id(d => d.id).distance(150))
+            .force("charge", d3.forceManyBody().strength(-1000))
             .force("center", d3.forceCenter(window.innerWidth / 2, window.innerHeight / 2))
-            .force("collision", d3.forceCollide().radius(60));
+            .force("collision", d3.forceCollide().radius(70));
     }
 
-    // 取得顯示名稱邏輯
-    function getDisplayName(d) {
-        const nameZH = d['姓名 (中)'] || "";
-        const nameEN = d['姓名 (英)'] || "";
-        
-        if (currentLang === 'ZH') {
-            return { main: nameZH, sub: nameEN ? `(${nameEN})` : "" };
-        } else {
-            // 英文模式：若無英文名則顯示中文
-            const main = nameEN || nameZH;
-            const sub = nameEN ? `(${nameZH})` : "";
-            return { main: main, sub: sub };
-        }
-    }
-
-    // 核心稱謂演算法 (BFS)
-    function calculateRelationship(targetId, sourceNode) {
-        if (targetId === sourceNode.id) return { ZH: "本人", EN: "Me" };
-        
-        let queue = [{ id: sourceNode.id, path: "" }];
-        let visited = new Set();
-        visited.add(sourceNode.id);
-
-        while (queue.length > 0) {
-            let current = queue.shift();
-            let person = nodes.find(n => n.id === current.id);
-            if (!person) continue;
-
-            // 尋找關係
-            let potential = [
-                { id: person['父親ID'], rel: 'F' },
-                { id: person['母親ID'], rel: 'M' }
-            ];
+    // 2. 加載並清洗資料 (核心修復區)
+    async function loadData() {
+        d3.select("#status-text").text("正在從 Google Cloud 獲取資料...");
+        try {
+            const response = await fetch(SCRIPT_URL);
+            const rawData = await response.json();
             
-            // 找配偶
-            if (person['配偶ID']) {
-                person['配偶ID'].split(',').forEach(sid => potential.push({ id: sid.trim(), rel: 'H' }));
-            }
-
-            // 找子女 (反向搜索)
-            nodes.filter(n => n['父親ID'] === person.id || n['母親ID'] === person.id).forEach(c => {
-                potential.push({ id: c.id, rel: 'C' });
+            // 建立節點 Map 確保 ID 唯一且存在
+            const nodeMap = new Map();
+            rawData.forEach(d => {
+                if (d.ID) nodeMap.set(d.ID.toString().trim(), { ...d, id: d.ID.toString().trim() });
             });
 
-            // 找手足 (同父母)
-            nodes.filter(n => (n['父親ID'] === person['父親ID'] || n['母親ID'] === person['母親ID']) && n.id !== person.id && (person['父親ID'] || person['母親ID']))
-                .forEach(s => potential.push({ id: s.id, rel: 'S' }));
+            nodes = Array.from(nodeMap.values());
+            links = [];
 
-            for (let p of potential) {
-                if (!p.id || visited.has(p.id)) continue;
-                let newPath = current.path + p.rel;
-                if (p.id === targetId) return parsePath(newPath, nodes.find(n => n.id === targetId));
-                visited.add(p.id);
-                queue.push({ id: p.id, path: newPath });
+            // 建立連線並防止 node not found
+            nodes.forEach(d => {
+                const checkAndAdd = (sid, type) => {
+                    if (sid && nodeMap.has(sid.toString().trim())) {
+                        links.push({ source: sid.toString().trim(), target: d.id, type: type });
+                    }
+                };
+                checkAndAdd(d['父親ID'], 'blood');
+                checkAndAdd(d['母親ID'], 'blood');
+                if (d['配偶ID']) {
+                    d['配偶ID'].toString().split(',').forEach(sid => {
+                        const cleanSid = sid.trim();
+                        if (d.id < cleanSid && nodeMap.has(cleanSid)) {
+                            links.push({ source: d.id, target: cleanSid, type: 'marriage' });
+                        }
+                    });
+                }
+            });
+
+            d3.select("#status-text").text(`連線成功：共 ${nodes.length} 名成員`);
+            render();
+        } catch (e) {
+            console.error(e);
+            d3.select("#status-text").text("資料讀取失敗，請檢查 URL 或網路");
+        }
+    }
+
+    // 3. 稱謂演算法 (BFS + 姑丈擴充)
+    function calculateRel(targetId, source) {
+        if (targetId === source.id) return { ZH: "本人", EN: "Me" };
+        let queue = [{ id: source.id, path: "" }], visited = new Set([source.id]);
+
+        while (queue.length > 0) {
+            let curr = queue.shift();
+            let p = nodes.find(n => n.id === curr.id);
+            if (!p) continue;
+
+            let neighbors = [
+                { id: p['父親ID'], r: 'F' }, { id: p['母親ID'], r: 'M' }
+            ];
+            // 配偶
+            if(p['配偶ID']) p['配偶ID'].split(',').forEach(s => neighbors.push({ id: s.trim(), r: 'H' }));
+            // 手足
+            nodes.filter(n => (n['父親ID']===p['父親ID'] || n['母親ID']===p['母親ID']) && n.id!==p.id && p['父親ID'])
+                 .forEach(s => neighbors.push({ id: s.id, r: 'S' }));
+            // 子女
+            nodes.filter(n => n['父親ID']===p.id || n['母親ID']===p.id).forEach(c => neighbors.push({ id: c.id, r: 'C' }));
+
+            for (let n of neighbors) {
+                if (!n.id || visited.has(n.id.toString().trim())) continue;
+                let newPath = curr.path + n.r;
+                if (n.id.toString().trim() === targetId) return parsePath(newPath, nodes.find(x => x.id === targetId));
+                visited.add(n.id.toString().trim());
+                queue.push({ id: n.id.toString().trim(), path: newPath });
             }
         }
-        return { ZH: "遠親", EN: "Relative" };
+        return { ZH: "親戚", EN: "Relative" };
     }
 
-    // 路徑解析器 (含姑丈與雙語邏輯)
-    function parsePath(path, target) {
-        const isMale = target['性別'] === 'M';
-        
-        // 簡易字典
+    function parsePath(p, target) {
+        const isM = target['性別'] === 'M';
         const dict = {
-            'F': { ZH: "父親", EN: "Father" },
-            'M': { ZH: "母親", EN: "Mother" },
-            'H': { ZH: isMale ? "丈夫" : "妻子", EN: "Spouse" },
-            'S': { ZH: isMale ? "兄弟" : "姊妹", EN: "Sibling" },
-            'FS': { ZH: isMale ? "伯叔" : "姑姑", EN: isMale ? "Uncle" : "Aunt" },
-            'MS': { ZH: isMale ? "舅舅" : "姨媽", EN: isMale ? "Uncle" : "Aunt" },
-            'FSH': { ZH: "姑丈", EN: "Uncle" }, // 核心擴充：姑丈
-            'SC': { ZH: isMale ? "堂/表親" : "堂/表親", EN: "Cousin" },
-            'FSC': { ZH: "堂/表兄弟姊妹", EN: "Cousin" }
+            'F': {ZH:"父親",EN:"Father"}, 'M': {ZH:"母親",EN:"Mother"}, 'S': {ZH:isM?"兄弟":"姊妹",EN:"Sibling"},
+            'FS': {ZH:isM?"伯叔":"姑姑",EN:isM?"Uncle":"Aunt"}, 'FSH': {ZH:"姑丈",EN:"Uncle"},
+            'SC': {ZH:"堂/表親",EN:"Cousin"}, 'FSC': {ZH:"堂/表親",EN:"Cousin"}
         };
-
-        return dict[path] || { ZH: "親戚", EN: "Relative" };
+        return dict[p] || { ZH: "親戚", EN: "Relative" };
     }
 
+    // 4. 繪製
     function render() {
         g.selectAll("*").remove();
-
-        const link = g.append("g").selectAll("line")
-            .data(links).enter().append("line").attr("class", "link");
-
-        const node = g.append("g").selectAll(".node")
-            .data(nodes).enter().append("g")
+        const link = g.append("g").selectAll("line").data(links).enter().append("line").attr("class", "link");
+        const node = g.append("g").selectAll(".node").data(nodes).enter().append("g")
             .attr("class", d => `node ${d.selected ? 'selected' : ''}`)
-            .call(d3.drag()
-                .on("start", (e, d) => { if (!e.active) simulation.alphaTarget(0.3).restart(); d.fx = d.x; d.fy = d.y; })
-                .on("drag", (e, d) => { d.fx = e.x; d.fy = e.y; })
-                .on("end", (e, d) => { if (!e.active) simulation.alphaTarget(0); d.fx = null; d.fy = null; }));
+            .on("click", (e, d) => selectNode(d))
+            .call(d3.drag().on("start", dragstarted).on("drag", dragged).on("end", dragended));
 
-        // 頭像裁切渲染 (SVG Pattern)
-        node.append("circle")
-            .attr("r", 25)
-            .attr("fill", "#333")
-            .on("click", (e, d) => selectNode(d));
-
-        // 雙語姓名渲染
+        node.append("circle").attr("r", 25).attr("fill", "#444");
+        
         node.each(function(d) {
             const el = d3.select(this);
-            const names = getDisplayName(d);
-            el.append("text").attr("class", "main-name").attr("y", 40).text(names.main);
-            el.append("text").attr("class", "sub-name").attr("y", 54).text(names.sub);
+            const zh = d['姓名 (中)'] || "";
+            const en = d['姓名 (英)'] || "";
+            const main = currentLang === 'ZH' ? zh : (en || zh);
+            const sub = currentLang === 'ZH' ? (en ? `(${en})` : "") : (en ? `(${zh})` : "");
+            el.append("text").attr("class", "main-name").attr("y", 40).text(main);
+            el.append("text").attr("class", "sub-name").attr("y", 54).text(sub);
         });
-
-        // Tooltip 互動
-        node.on("mouseenter", (e, d) => {
-            const rel = d.tempRel || { ZH: "", EN: "" };
-            const relText = currentLang === 'ZH' ? `${rel.ZH} (${rel.EN})` : `${rel.EN} / ${rel.ZH}`;
-            d3.select("#tooltip").style("opacity", 1)
-                .html(`<strong>${getDisplayName(d).main}</strong><br>${relText}`)
-                .style("left", (e.pageX + 10) + "px").style("top", (e.pageY - 10) + "px");
-        }).on("mouseleave", () => d3.select("#tooltip").style("opacity", 0));
 
         simulation.nodes(nodes);
         simulation.force("link").links(links);
         simulation.alpha(1).restart();
-
         simulation.on("tick", () => {
             link.attr("x1", d => d.source.x).attr("y1", d => d.source.y).attr("x2", d => d.target.x).attr("y2", d => d.target.y);
             node.attr("transform", d => `translate(${d.x},${d.y})`);
         });
     }
 
-    function selectNode(selectedNode) {
-        nodes.forEach(n => {
-            n.selected = (n.id === selectedNode.id);
-            n.tempRel = calculateRelationship(n.id, selectedNode);
-        });
+    function selectNode(d) {
+        nodes.forEach(n => { n.selected = (n.id === d.id); n.tempRel = calculateRel(n.id, d); });
         render();
-        openSidebar(selectedNode);
-    }
-
-    function openSidebar(d) {
-        const names = getDisplayName(d);
         d3.select("#sidebar").classed("open", true);
-        d3.select("#sb-name").text(`${names.main} ${names.sub}`);
+        d3.select("#sb-name").text(currentLang==='ZH' ? d['姓名 (中)'] : (d['姓名 (英)'] || d['姓名 (中)']));
+        d3.select("#sb-rel").text((currentLang==='ZH'?'關係：':'Rel: ') + (d.tempRel[currentLang]));
+        d3.select("#sb-bio").text(d['個人簡介'] || "");
         d3.select("#sb-photo").attr("src", d['相片路徑'] || "");
-        
-        const rel = d.tempRel || { ZH: "本人", EN: "Me" };
-        const relDisplay = currentLang === 'ZH' ? `${rel.ZH} (${rel.EN})` : `${rel.EN} / ${rel.ZH}`;
-        d3.select("#sb-rel").text(i18n[currentLang].relPrefix + " " + relDisplay);
-        
-        const bio = d['個人簡介'] || i18n[currentLang].emptyBio;
-        d3.select("#sb-bio").text(bio);
     }
 
+    function dragstarted(e, d) { if (!e.active) simulation.alphaTarget(0.3).restart(); d.fx = d.x; d.fy = d.y; }
+    function dragged(e, d) { d.fx = e.x; d.fy = e.y; }
+    function dragended(e, d) { if (!e.active) simulation.alphaTarget(0); d.fx = null; d.fy = null; }
     function closeSidebar() { d3.select("#sidebar").classed("open", false); }
 
-    // 資料載入與處理
-    async function loadData() {
-        try {
-            // 此處為示範，實際應 fetch(SCRIPT_URL)
-            // 我將手動模擬一段來自您 CSV 的資料進行測試
-            rawData = [
-                { "ID": "P005", "姓名 (中)": "黃阿元", "姓名 (英)": "", "性別": "M", "配偶ID": "P006" },
-                { "ID": "P006", "姓名 (中)": "黃詹月春", "姓名 (英)": "", "性別": "F", "配偶ID": "P005" },
-                { "ID": "P007", "姓名 (中)": "黃薏如", "姓名 (英)": "Jennifer", "性別": "F", "父親ID": "P005", "母親ID": "P006", "配偶ID": "P010" },
-                { "ID": "P010", "姓名 (中)": "林銘呈", "姓名 (英)": "Michael", "性別": "M", "配偶ID": "P007" },
-                { "ID": "P003", "姓名 (中)": "黃柏文", "姓名 (英)": "Bruce", "性別": "M", "父親ID": "P001", "母親ID": "P002" }
-            ];
-
-            // 建立連線
-            nodes = rawData.map(d => ({ ...d, id: d.ID }));
-            links = [];
-            nodes.forEach(d => {
-                if (d['父親ID']) links.push({ source: d['父親ID'], target: d.id, type: 'blood' });
-                if (d['母親ID']) links.push({ source: d['母親ID'], target: d.id, type: 'blood' });
-                if (d['配偶ID']) d['配偶ID'].split(',').forEach(sid => {
-                    if (d.id < sid.trim()) links.push({ source: d.id, target: sid.trim(), type: 'marriage' });
-                });
-            });
-
-            updateStatus("資料載入成功", "success");
-            render();
-        } catch (e) {
-            updateStatus("資料讀取失敗", "error");
-        }
-    }
-
-    function updateStatus(t, s) { 
-        d3.select("#status-text").text(t); 
-        d3.select("#status-icon").text(s === "success" ? "✅" : (s === "error" ? "❌" : "⏳")); 
-    }
-
-    window.onload = () => { initChart(); loadData(); updateUI(); };
+    window.onload = () => { initChart(); loadData(); };
 </script>
 </body>
 </html>
