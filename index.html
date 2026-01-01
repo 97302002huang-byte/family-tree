@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>家族數位族譜 V4.8 - 地平線鎖定版</title>
+    <title>家族數位族譜 V4.9 - 配偶對齊穩定版</title>
     <script src="https://d3js.org/d3.v7.min.js"></script>
     <style>
         :root { --primary: #00ff9d; --bg: #1a1a1a; --text: #ffffff; --dim: #aaaaaa; }
@@ -29,7 +29,7 @@
         <button id="btn-zh" class="lang-btn active" onclick="setLang('ZH')">中文</button>
         <button id="btn-en" class="lang-btn" onclick="setLang('EN')">English</button>
     </div>
-    <div id="status-bar"><span id="status-icon">⏳</span> <span id="status-text">同步家族數據...</span></div>
+    <div id="status-bar"><span id="status-icon">⏳</span> <span id="status-text">同步數據中...</span></div>
     <div id="tooltip"></div>
     <div id="sidebar">
         <div onclick="closeSidebar()" style="cursor:pointer; float:right; font-size:28px;">&times;</div>
@@ -58,11 +58,9 @@
         svg.call(d3.zoom().scaleExtent([0.1, 5]).on("zoom", (e) => g.attr("transform", e.transform)));
 
         simulation = d3.forceSimulation()
-            // 配偶連線距離較短且強度更高
-            .force("link", d3.forceLink().id(d => d.id).distance(d => d.type === 'marriage' ? 60 : 150).strength(d => d.type === 'marriage' ? 1.5 : 0.7))
-            .force("charge", d3.forceManyBody().strength(-2500))
-            .force("x", d3.forceX(window.innerWidth / 2).strength(0.05))
-            // Y 軸鎖定引力 (輔助用，核心在 tick 的 hard code)
+            .force("link", d3.forceLink().id(d => d.id).distance(d => d.type === 'marriage' ? 50 : 150).strength(d => d.type === 'marriage' ? 1.5 : 0.6))
+            .force("charge", d3.forceManyBody().strength(-2800))
+            .force("x", d3.forceX(window.innerWidth / 2).strength(0.08))
             .force("y", d3.forceY(d => d.level * 250).strength(2))
             .force("collision", d3.forceCollide().radius(110));
     }
@@ -72,17 +70,39 @@
             const res = await fetch(SCRIPT_URL);
             const raw = await res.json();
             const nodeMap = new Map();
-            raw.forEach(d => { if(d.ID) { const id = d.ID.toString().trim(); nodeMap.set(id, {...d, id, level: 0}); }});
+            raw.forEach(d => { if(d.ID) { const id = d.ID.toString().trim(); nodeMap.set(id, {...d, id, level: -1}); }});
             
-            // 階層計算
+            // 階段 1: 計算直系血緣輩分 (Leveling by Blood)
+            let rootNodes = Array.from(nodeMap.values()).filter(n => !n['父親ID'] && !n['母親ID']);
+            rootNodes.forEach(n => n.level = 0);
+
             for(let i=0; i<10; i++){
                 nodeMap.forEach(n => {
                     const f = nodeMap.get(n['父親ID']?.toString().trim());
                     const m = nodeMap.get(n['母親ID']?.toString().trim());
-                    if(f) n.level = Math.max(n.level, f.level + 1);
-                    if(m) n.level = Math.max(n.level, m.level + 1);
+                    if(f && f.level !== -1) n.level = Math.max(n.level, f.level + 1);
+                    if(m && m.level !== -1) n.level = Math.max(n.level, m.level + 1);
                 });
             }
+
+            // 階段 2: 配偶輩分同步機制 (Spouse Level Sync)
+            // 循環多次以處理連鎖姻親
+            for(let i=0; i<5; i++){
+                nodeMap.forEach(n => {
+                    if (n['配偶ID']) {
+                        n['配偶ID'].toString().split(',').forEach(sid => {
+                            const spouse = nodeMap.get(sid.trim());
+                            if (spouse) {
+                                if (n.level !== -1 && spouse.level === -1) spouse.level = n.level;
+                                else if (spouse.level !== -1 && n.level === -1) n.level = spouse.level;
+                            }
+                        });
+                    }
+                });
+            }
+            
+            // 防呆：若還是沒輩分，設為 0
+            nodeMap.forEach(n => { if(n.level === -1) n.level = 0; });
 
             nodes = Array.from(nodeMap.values());
             links = [];
@@ -97,12 +117,11 @@
                     if (d.id < s && nodeMap.has(s)) links.push({ source: d.id, target: s, type: 'marriage' });
                 });
             });
-            d3.select("#status-text").text(`族譜就緒 | ${nodes.length} 名成員`);
+            d3.select("#status-text").text(`數據已同步：${nodes.length} 名成員`);
             render();
-        } catch (e) { d3.select("#status-text").text("載入異常"); }
+        } catch (e) { d3.select("#status-text").text("載入失敗"); }
     }
 
-    // 全方位精準稱謂算法
     function calculateRel(targetId, source) {
         if (targetId === source.id) return { ZH: "本人", EN: "Me" };
         let queue = [{ id: source.id, path: [] }], visited = new Map([[source.id, 0]]);
@@ -187,8 +206,7 @@
         simulation.on("tick", () => {
             link.attr("x1", d=>d.source.x).attr("y1", d=>d.source.y).attr("x2", d=>d.target.x).attr("y2", d=>d.target.y);
             node.attr("transform", d => {
-                // 強硬地重寫 Y 座標，禁止上下偏移
-                d.y = d.level * 250;
+                d.y = d.level * 250; // 強制座標鎖定
                 return `translate(${d.x},${d.y})`;
             });
         });
