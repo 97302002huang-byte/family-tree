@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>家族數位族譜 V4.9 - 配偶對齊穩定版</title>
+    <title>家族數位族譜 V5.0 - 秩序重建版</title>
     <script src="https://d3js.org/d3.v7.min.js"></script>
     <style>
         :root { --primary: #00ff9d; --bg: #1a1a1a; --text: #ffffff; --dim: #aaaaaa; }
@@ -11,17 +11,17 @@
         #lang-control { position: fixed; top: 20px; right: 20px; z-index: 1001; background: rgba(0,0,0,0.6); padding: 5px; border-radius: 8px; }
         .lang-btn { padding: 8px 15px; cursor: pointer; background: transparent; color: var(--dim); border: none; transition: 0.3s; }
         .lang-btn.active { background: var(--primary); color: #000; font-weight: bold; border-radius: 5px; }
-        #status-bar { position: fixed; top: 20px; left: 50%; transform: translateX(-50%); background: rgba(0,0,0,0.85); color: var(--primary); padding: 10px 25px; border-radius: 50px; z-index: 1000; font-size: 14px; border: 1px solid #333; }
+        #status-bar { position: fixed; top: 20px; left: 50%; transform: translateX(-50%); background: rgba(0,0,0,0.85); color: var(--primary); padding: 10px 25px; border-radius: 50px; z-index: 1000; font-size: 13px; border: 1px solid #333; }
         #canvas { width: 100vw; height: 100vh; cursor: grab; }
-        .link { stroke: #888; stroke-opacity: 0.4; stroke-width: 1.5px; fill: none; }
+        .link { stroke: #aaa; stroke-opacity: 0.3; stroke-width: 1.5px; fill: none; }
         .node circle { stroke: #fff; stroke-width: 2px; transition: 0.3s; cursor: pointer; }
-        .node.selected circle { stroke: var(--primary); stroke-width: 5px; filter: drop-shadow(0 0 10px var(--primary)); }
+        .node.selected circle { stroke: var(--primary); stroke-width: 6px; filter: drop-shadow(0 0 12px var(--primary)); }
         .main-name { fill: #fff; font-size: 14px; font-weight: bold; text-anchor: middle; pointer-events: none; }
         .sub-name { fill: var(--dim); font-size: 10px; text-anchor: middle; pointer-events: none; }
         #sidebar { position: fixed; right: -350px; top: 0; width: 320px; height: 100vh; background: rgba(20,20,20,0.98); padding: 25px; color: white; transition: 0.4s; z-index: 2000; border-left: 1px solid #444; overflow-y: auto; }
         #sidebar.open { right: 0; }
         .rel-tag { display: inline-block; padding: 5px 15px; background: #333; color: var(--primary); border-radius: 5px; border: 1px solid var(--primary); margin: 15px 0; font-size: 14px; }
-        #tooltip { position: absolute; padding: 10px 15px; background: rgba(0,0,0,0.9); color: white; border-radius: 6px; pointer-events: none; opacity: 0; z-index: 3000; font-size: 13px; border: 1px solid var(--primary); }
+        #tooltip { position: absolute; padding: 10px 15px; background: rgba(0,0,0,0.95); color: white; border-radius: 6px; pointer-events: none; opacity: 0; z-index: 3000; font-size: 13px; border: 1px solid var(--primary); }
     </style>
 </head>
 <body>
@@ -29,7 +29,7 @@
         <button id="btn-zh" class="lang-btn active" onclick="setLang('ZH')">中文</button>
         <button id="btn-en" class="lang-btn" onclick="setLang('EN')">English</button>
     </div>
-    <div id="status-bar"><span id="status-icon">⏳</span> <span id="status-text">同步數據中...</span></div>
+    <div id="status-bar"><span id="status-icon">⏳</span> <span id="status-text">正在重建家族秩序...</span></div>
     <div id="tooltip"></div>
     <div id="sidebar">
         <div onclick="closeSidebar()" style="cursor:pointer; float:right; font-size:28px;">&times;</div>
@@ -58,10 +58,10 @@
         svg.call(d3.zoom().scaleExtent([0.1, 5]).on("zoom", (e) => g.attr("transform", e.transform)));
 
         simulation = d3.forceSimulation()
-            .force("link", d3.forceLink().id(d => d.id).distance(d => d.type === 'marriage' ? 50 : 150).strength(d => d.type === 'marriage' ? 1.5 : 0.6))
-            .force("charge", d3.forceManyBody().strength(-2800))
-            .force("x", d3.forceX(window.innerWidth / 2).strength(0.08))
-            .force("y", d3.forceY(d => d.level * 250).strength(2))
+            .force("link", d3.forceLink().id(d => d.id).distance(d => d.type === 'marriage' ? 50 : 160).strength(d => d.type === 'marriage' ? 1.8 : 0.4))
+            .force("charge", d3.forceManyBody().strength(-3000))
+            .force("x", d3.forceX(window.innerWidth / 2).strength(0.05))
+            .force("y", d3.forceY(d => d.level * 280).strength(2))
             .force("collision", d3.forceCollide().radius(110));
     }
 
@@ -70,11 +70,23 @@
             const res = await fetch(SCRIPT_URL);
             const raw = await res.json();
             const nodeMap = new Map();
-            raw.forEach(d => { if(d.ID) { const id = d.ID.toString().trim(); nodeMap.set(id, {...d, id, level: -1}); }});
+            raw.forEach((d, i) => { if(d.ID) { 
+                const id = d.ID.toString().trim(); 
+                nodeMap.set(id, {...d, id, level: -1, order: i}); 
+            }});
             
-            // 階段 1: 計算直系血緣輩分 (Leveling by Blood)
-            let rootNodes = Array.from(nodeMap.values()).filter(n => !n['父親ID'] && !n['母親ID']);
-            rootNodes.forEach(n => n.level = 0);
+            // 1. 溯源計算輩分 (Top-down Leveling)
+            // 先找完全沒父母的人
+            let potentialRoots = Array.from(nodeMap.values()).filter(n => !n['父親ID'] && !n['母親ID']);
+            // 排除掉只是姻親的根節點 (如劉水蓮)，除非全家都沒填父母
+            let bloodRoots = potentialRoots.filter(n => {
+                const isSpouseOfSomeone = Array.from(nodeMap.values()).some(x => x['配偶ID'] && x['配偶ID'].includes(n.id));
+                const hasChildren = Array.from(nodeMap.values()).some(x => x['父親ID'] === n.id || x['母親ID'] === n.id);
+                return hasChildren || !isSpouseOfSomeone;
+            });
+            
+            if(bloodRoots.length === 0) bloodRoots = potentialRoots;
+            bloodRoots.forEach(n => n.level = 0);
 
             for(let i=0; i<10; i++){
                 nodeMap.forEach(n => {
@@ -83,28 +95,31 @@
                     if(f && f.level !== -1) n.level = Math.max(n.level, f.level + 1);
                     if(m && m.level !== -1) n.level = Math.max(n.level, m.level + 1);
                 });
-            }
-
-            // 階段 2: 配偶輩分同步機制 (Spouse Level Sync)
-            // 循環多次以處理連鎖姻親
-            for(let i=0; i<5; i++){
+                // 配偶對齊補丁 (每一輪血緣計算後立即同步配偶)
                 nodeMap.forEach(n => {
                     if (n['配偶ID']) {
                         n['配偶ID'].toString().split(',').forEach(sid => {
-                            const spouse = nodeMap.get(sid.trim());
-                            if (spouse) {
-                                if (n.level !== -1 && spouse.level === -1) spouse.level = n.level;
-                                else if (spouse.level !== -1 && n.level === -1) n.level = spouse.level;
+                            const sp = nodeMap.get(sid.trim());
+                            if (sp) {
+                                if (n.level !== -1 && sp.level === -1) sp.level = n.level;
+                                else if (sp.level !== -1 && n.level === -1) n.level = sp.level;
                             }
                         });
                     }
                 });
             }
             
-            // 防呆：若還是沒輩分，設為 0
             nodeMap.forEach(n => { if(n.level === -1) n.level = 0; });
 
+            // 2. 初始化座標：根據 Level 和 CSV 順序預排，防止交叉
             nodes = Array.from(nodeMap.values());
+            const levelCounts = {};
+            nodes.sort((a,b) => a.order - b.order).forEach(n => {
+                levelCounts[n.level] = (levelCounts[n.level] || 0) + 1;
+                n.x = (window.innerWidth / 2) + (levelCounts[n.level] - 5) * 200;
+                n.y = n.level * 280;
+            });
+
             links = [];
             nodes.forEach(d => {
                 const add = (pid, type) => {
@@ -117,7 +132,7 @@
                     if (d.id < s && nodeMap.has(s)) links.push({ source: d.id, target: s, type: 'marriage' });
                 });
             });
-            d3.select("#status-text").text(`數據已同步：${nodes.length} 名成員`);
+            d3.select("#status-text").text(`秩序重建完成：${nodes.length} 名成員`);
             render();
         } catch (e) { d3.select("#status-text").text("載入失敗"); }
     }
@@ -137,9 +152,9 @@
             for (let n of adj) {
                 const nid = n.id?.toString().trim();
                 if (!nid) continue;
-                const newDist = (visited.get(curr.id) || 0) + n.w;
-                if (!visited.has(nid) || newDist < visited.get(nid)) {
-                    visited.set(nid, newDist);
+                const d = (visited.get(curr.id) || 0) + n.w;
+                if (!visited.has(nid) || d < visited.get(nid)) {
+                    visited.set(nid, d);
                     let newPath = [...curr.path, {r: n.r, id: nid}];
                     if (nid === targetId) return parseDetailedPath(newPath, source);
                     queue.push({ id: nid, path: newPath });
@@ -177,7 +192,7 @@
                 .attr("xlink:href", d['相片路徑']);
         }});
         const link = g.append("g").selectAll("line").data(links).enter().append("line")
-            .attr("class", "link").style("stroke-dasharray", d => d.type === 'marriage' ? "5,5" : "0");
+            .attr("class", "link").style("stroke-dasharray", d => d.type === 'marriage' ? "6,4" : "0");
         const node = g.append("g").selectAll(".node").data(nodes).enter().append("g")
             .attr("class", d => `node ${d.id === selectedId ? 'selected' : ''}`)
             .on("click", (e, d) => selectNode(d))
@@ -193,12 +208,12 @@
             .call(d3.drag().on("start", (e,d)=>{if(!e.active)simulation.alphaTarget(0.3).restart();d.fx=d.x;d.fy=d.y;})
             .on("drag", (e,d)=>{d.fx=e.x;d.fy=e.y;}).on("end", (e,d)=>{if(!e.active)simulation.alphaTarget(0);d.fx=null;d.fy=null;}));
 
-        node.append("circle").attr("r", 35).attr("fill", d => d['相片路徑'] ? `url(#pat-${d.id})` : (d['性別'] === 'F' ? '#F5A623' : '#4A90E2'));
+        node.append("circle").attr("r", 38).attr("fill", d => d['相片路徑'] ? `url(#pat-${d.id})` : (d['性別'] === 'F' ? '#F5A623' : '#4A90E2'));
         node.each(function(d) {
             const el = d3.select(this), zh = d['姓名 (中)'], en = d['姓名 (英)'];
             const main = currentLang==='ZH'?zh:(en||zh), sub = currentLang==='ZH'?(en?`(${en})`:''):(en?`(${zh})`:'');
-            el.append("text").attr("class", "main-name").attr("y", 52).text(main);
-            el.append("text").attr("class", "sub-name").attr("y", 66).text(sub);
+            el.append("text").attr("class", "main-name").attr("y", 58).text(main);
+            el.append("text").attr("class", "sub-name").attr("y", 74).text(sub);
         });
 
         simulation.nodes(nodes); simulation.force("link").links(links);
@@ -206,7 +221,7 @@
         simulation.on("tick", () => {
             link.attr("x1", d=>d.source.x).attr("y1", d=>d.source.y).attr("x2", d=>d.target.x).attr("y2", d=>d.target.y);
             node.attr("transform", d => {
-                d.y = d.level * 250; // 強制座標鎖定
+                d.y = d.level * 280; // 核心地平線鎖定
                 return `translate(${d.x},${d.y})`;
             });
         });
