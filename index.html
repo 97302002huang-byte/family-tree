@@ -3,35 +3,31 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>家族數位族譜 V4.4 - 完整功能旗艦版</title>
+    <title>家族數位族譜 V4.5 - 混合穩定版</title>
     <script src="https://d3js.org/d3.v7.min.js"></script>
     <style>
         :root { --primary: #00ff9d; --bg: #1a1a1a; --text: #ffffff; --dim: #aaaaaa; }
         body { margin: 0; overflow: hidden; background: var(--bg); font-family: "Microsoft JhengHei", sans-serif; }
         
-        /* 語系切換 */
+        /* 介面元件 */
         #lang-control { position: fixed; top: 20px; right: 20px; z-index: 1001; background: rgba(0,0,0,0.5); padding: 5px; border-radius: 8px; }
         .lang-btn { padding: 8px 15px; cursor: pointer; background: transparent; color: var(--dim); border: none; transition: 0.3s; }
         .lang-btn.active { background: var(--primary); color: #000; font-weight: bold; border-radius: 5px; }
-
-        /* 狀態列 */
         #status-bar { position: fixed; top: 20px; left: 50%; transform: translateX(-50%); background: rgba(0,0,0,0.85); color: var(--primary); padding: 10px 25px; border-radius: 50px; z-index: 1000; font-size: 14px; border: 1px solid #333; }
         
+        /* 畫布 */
         #canvas { width: 100vw; height: 100vh; cursor: grab; }
         .link { stroke: #555; stroke-opacity: 0.4; stroke-width: 1.5px; fill: none; }
         .node circle { stroke: #fff; stroke-width: 2px; transition: 0.3s; cursor: pointer; }
         .node.selected circle { stroke: var(--primary); stroke-width: 5px; filter: drop-shadow(0 0 8px var(--primary)); }
-        
         .main-name { fill: #fff; font-size: 14px; font-weight: bold; text-anchor: middle; pointer-events: none; }
         .sub-name { fill: var(--dim); font-size: 10px; text-anchor: middle; pointer-events: none; }
 
-        /* 側邊欄 */
+        /* 側邊欄與 Tooltip */
         #sidebar { position: fixed; right: -350px; top: 0; width: 320px; height: 100vh; background: rgba(20,20,20,0.98); padding: 25px; color: white; transition: 0.4s; z-index: 2000; border-left: 1px solid #444; box-shadow: -10px 0 30px rgba(0,0,0,0.5); overflow-y: auto; }
         #sidebar.open { right: 0; }
         .rel-tag { display: inline-block; padding: 5px 15px; background: #333; color: var(--primary); border-radius: 5px; border: 1px solid var(--primary); margin: 15px 0; font-size: 14px; }
-        
-        /* 懸浮視窗 */
-        #tooltip { position: absolute; padding: 10px 15px; background: rgba(0,0,0,0.9); color: white; border-radius: 6px; pointer-events: none; opacity: 0; z-index: 3000; font-size: 13px; border: 1px solid var(--primary); line-height: 1.5; }
+        #tooltip { position: absolute; padding: 10px 15px; background: rgba(0,0,0,0.9); color: white; border-radius: 6px; pointer-events: none; opacity: 0; z-index: 3000; font-size: 13px; border: 1px solid var(--primary); }
     </style>
 </head>
 <body>
@@ -42,12 +38,11 @@
     </div>
 
     <div id="status-bar"><span id="status-icon">⏳</span> <span id="status-text">同步家族數據中...</span></div>
-    
     <div id="tooltip"></div>
 
     <div id="sidebar">
         <div onclick="closeSidebar()" style="cursor:pointer; float:right; font-size:28px;">&times;</div>
-        <img id="sb-photo" src="" style="width:100%; height:220px; object-fit:cover; border-radius:12px; margin-bottom:20px; border:1px solid #444;" onerror="this.src='https://via.placeholder.com/300x200?text=No+Photo'">
+        <img id="sb-photo" src="" style="width:100%; height:220px; object-fit:cover; border-radius:12px; margin-bottom:20px; border:1px solid #444;" onerror="this.style.display='none'">
         <h2 id="sb-name" style="margin:0;"></h2>
         <div id="sb-rel" class="rel-tag"></div>
         <div style="color:#888; font-size:12px; margin-bottom:8px;">BIOGRAPHY / 個人簡介</div>
@@ -82,11 +77,11 @@
         svg.call(zoom);
 
         simulation = d3.forceSimulation()
-            .force("link", d3.forceLink().id(d => d.id).distance(130))
+            .force("link", d3.forceLink().id(d => d.id).distance(140))
             .force("charge", d3.forceManyBody().strength(-1500))
-            .force("x", d3.forceX(window.innerWidth / 2).strength(0.1))
+            .force("x", d3.forceX(window.innerWidth / 2).strength(0.15))
             .force("y", d3.forceY(d => d.level * 200).strength(1))
-            .force("collision", d3.forceCollide().radius(80));
+            .force("collision", d3.forceCollide().radius(85));
     }
 
     async function loadData() {
@@ -102,8 +97,8 @@
                 }
             });
 
-            // 計算階層
-            for(let i=0; i<10; i++){
+            // 計算階層 (Level)
+            for(let i=0; i<8; i++){
                 nodeMap.forEach(n => {
                     const f = nodeMap.get(n['父親ID']?.toString().trim());
                     const m = nodeMap.get(n['母親ID']?.toString().trim());
@@ -131,13 +126,14 @@
             });
 
             d3.select("#status-icon").text("✅");
-            d3.select("#status-text").text(`數據就緒 | 成員: ${nodes.length}`);
+            d3.select("#status-text").text(`連線完成 | ${nodes.length} 名成員`);
             render();
         } catch (e) {
-            d3.select("#status-text").text("數據載入失敗");
+            d3.select("#status-text").text("資料載入失敗");
         }
     }
 
+    // 稱謂計算與字典 (V4.4 高級版保留)
     function calculateRel(targetId, source) {
         if (targetId === source.id) return { ZH: "本人", EN: "Me" };
         let queue = [{ id: source.id, path: "" }], visited = new Set([source.id]);
@@ -145,7 +141,7 @@
         while (queue.length > 0) {
             let curr = queue.shift();
             let p = nodes.find(n => n.id === curr.id);
-            if (!p || curr.path.length > 6) continue;
+            if (!p || curr.path.length > 5) continue;
 
             let adj = [
                 { id: p['父親ID'], r: 'F' }, { id: p['母親ID'], r: 'M' }
@@ -179,6 +175,7 @@
         return dict[p] || { ZH: "親戚", EN: "Relative" };
     }
 
+    // 渲染 (混合模式：V3.5 穩定的圖像機制 + V4.4 標籤)
     function render() {
         g.selectAll("*").remove();
 
@@ -213,13 +210,13 @@
             .on("mouseleave", () => d3.select("#tooltip").style("opacity", 0))
             .call(d3.drag().on("start", dragstarted).on("drag", dragged).on("end", dragended));
 
+        // 恢復 V3.5 的大頭貼渲染穩定性
         node.append("circle").attr("r", 35)
             .attr("fill", d => d['相片路徑'] ? `url(#pat-${d.id})` : (d['性別'] === 'F' ? '#F5A623' : '#4A90E2'));
         
         node.each(function(d) {
             const el = d3.select(this);
-            const zh = d['姓名 (中)'] || "";
-            const en = d['姓名 (英)'] || "";
+            const zh = d['姓名 (中)'] || "", en = d['姓名 (英)'] || "";
             const main = currentLang === 'ZH' ? zh : (en || zh);
             const sub = currentLang === 'ZH' ? (en ? `(${en})` : "") : (en ? `(${zh})` : "");
             el.append("text").attr("class", "main-name").attr("y", 52).text(main);
@@ -248,7 +245,13 @@
         const rel = selectedId ? calculateRel(d.id, nodes.find(n => n.id === selectedId)) : {ZH:"成員", EN:"Member"};
         d3.select("#sb-rel").text((currentLang==='ZH'?'關係：':'Rel: ') + rel[currentLang]);
         d3.select("#sb-bio").text(d['個人簡介'] || "...");
-        d3.select("#sb-photo").attr("src", d['相片路徑'] || "");
+        
+        const photoEl = d3.select("#sb-photo");
+        if(d['相片路徑']) {
+            photoEl.style("display", "block").attr("src", d['相片路徑']);
+        } else {
+            photoEl.style("display", "none");
+        }
     }
 
     function dragstarted(e, d) { if (!e.active) simulation.alphaTarget(0.3).restart(); d.fx = d.x; d.fy = d.y; }
